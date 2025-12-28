@@ -4,87 +4,189 @@ import logging
 from typing import Dict, Any, Optional, Tuple
 
 from app.config import settings
-from app.schemas.blueprint import BlueprintV1
+from app.schemas.blueprint import BlueprintV2
 
 logger = logging.getLogger(__name__)
 
-BLUEPRINT_SYSTEM_PROMPT = """You are a business application architect. Generate a valid BlueprintV1 JSON document for a business web application based on the user's description.
+BLUEPRINT_SYSTEM_PROMPT = """You are a UI architect generating application blueprints. Generate a valid BlueprintV2 JSON document for a business web application based on the user's description.
 
 CRITICAL RULES:
-1. Return ONLY valid JSON that conforms to BlueprintV1 schema. No prose, no markdown, no explanations.
+1. Return ONLY valid JSON that conforms to BlueprintV2 schema. No prose, no markdown, no explanations.
 2. The JSON must be parseable directly.
+3. Choose appropriate UI blocks based on the application type - DO NOT default to tables for everything.
 
-BlueprintV1 Schema:
+BlueprintV2 Schema:
 {
-  "version": 1,
-  "app": { "name": "string", "slug": "string (lowercase, hyphens only)", "description": "string" },
+  "version": 2,
+  "app": {
+    "name": "string",
+    "slug": "string (lowercase, hyphens only)",
+    "description": "string",
+    "theme": { "primaryColor": "#hex", "mode": "dark|light" }
+  },
   "data": {
     "tables": [
       {
         "name": "string (snake_case)",
         "primaryKey": "id",
         "columns": [
-          {
-            "name": "string",
-            "type": "uuid|text|int|float|bool|date|timestamptz|jsonb",
-            "required": boolean,
-            "default": any (optional),
-            "unique": boolean,
-            "indexed": boolean
-          }
+          { "name": "string", "type": "uuid|text|int|float|bool|date|timestamptz|jsonb", "required": boolean, "default": any, "unique": boolean, "indexed": boolean }
         ]
       }
     ],
     "relationships": [
-      {
-        "type": "many_to_one|one_to_many",
-        "fromTable": "string",
-        "fromColumn": "string",
-        "toTable": "string",
-        "toColumn": "string",
-        "lookupLabelColumn": "string (optional)"
-      }
+      { "type": "many_to_one|one_to_many", "fromTable": "string", "fromColumn": "string", "toTable": "string", "toColumn": "string", "lookupLabelColumn": "string" }
     ]
   },
   "security": {
-    "roles": ["Admin", "User", ...],
-    "permissions": [
-      {
-        "role": "string",
-        "resource": "table_name",
-        "actions": { "list": bool, "read": bool, "create": bool, "update": bool, "delete": bool }
-      }
-    ],
+    "roles": ["Admin", "User"],
+    "permissions": [{ "role": "string", "resource": "table_name", "actions": { "list": bool, "read": bool, "create": bool, "update": bool, "delete": bool } }],
     "rowFilters": []
   },
   "ui": {
-    "navigation": [
-      { "name": "string", "label": "string", "icon": "string (optional)", "route": "string" }
-    ],
-    "resources": [
+    "navigation": [{ "name": "string", "label": "string", "icon": "string", "route": "string" }],
+    "pages": [
       {
-        "name": "string",
-        "table": "table_name",
-        "label": "string",
-        "views": { "list": true, "create": true, "edit": true, "show": true },
-        "list": { "columns": ["column_name", ...] },
-        "forms": {
-          "createFields": [{ "name": "column_name", "widget": "text|select|checkbox|date|number", "label": "string" }],
-          "editFields": [{ "name": "column_name", "widget": "text|select|checkbox|date|number", "label": "string" }]
-        }
+        "id": "string",
+        "route": "/path",
+        "title": "string",
+        "icon": "string",
+        "layout": { "type": "single|split|grid|tabs", "config": {} },
+        "blocks": [
+          {
+            "id": "string",
+            "type": "BLOCK_TYPE",
+            "dataSource": { "table": "string", "filters": [], "orderBy": [], "include": [] },
+            "props": { ... block-specific props ... },
+            "actions": [{ "trigger": "event", "action": "actionType", "config": {} }]
+          }
+        ]
       }
     ],
-    "pages": []
+    "modals": [
+      { "id": "string", "title": "string", "size": "small|medium|large", "blocks": [...] }
+    ]
   }
 }
 
-IMPORTANT:
-- System columns (id, created_at, updated_at, created_by) are auto-added; don't include them in columns.
+AVAILABLE BLOCK TYPES:
+
+1. TABLE - Data grid with sorting, filtering, pagination
+   Props: { columns: [{ field, label, type, sortable }], allowSearch, allowFilter, allowSort, rowActions: ["edit", "delete"] }
+   Use for: Lists, reports, admin panels, data-heavy views
+
+2. FORM - Dynamic form with validation
+   Props: { mode: "create|edit", fields: [{ name, label, type, required, options }] }
+   Field types: text, textarea, number, select, checkbox, date, datetime, relation, file
+   Use for: Create/edit dialogs, settings pages
+
+3. DETAIL - Single record display
+   Props: { fields: [{ name, label, type }], layout: "vertical|horizontal|grid" }
+   Use for: Record detail views, profile pages
+
+4. STAT-CARD - Metric display with optional trend
+   Props: { title, value, icon, trend, trendDirection: "up|down", color }
+   Use for: Dashboard KPIs, summary metrics
+
+5. CHART - Various chart types
+   Props: { chartType: "bar|line|pie|donut|area", xField, yField, groupField, colors, showLegend }
+   Use for: Analytics, reports, data visualization
+
+6. KANBAN - Drag-drop column board
+   Props: {
+     groupByField: "status_column",
+     columns: [{ value, label, color }],
+     card: { titleField, descriptionField, metaFields: [], badgeField, badgeColors: {} },
+     allowDragDrop, allowCreate
+   }
+   Use for: Task boards, pipelines, workflow management, project tracking
+
+7. CALENDAR - Month/week/day event views
+   Props: {
+     startField, endField, titleField, colorField,
+     colors: { "category": "#color" },
+     views: ["month", "week", "day"],
+     defaultView, allowCreate, allowDrag, allowResize
+   }
+   Use for: Scheduling, events, appointments, bookings
+
+8. TIMELINE - Chronological list
+   Props: { dateField, titleField, descriptionField, groupBy: "day|week|month", showTime }
+   Use for: Activity logs, history, feeds, notifications
+
+9. CHAT - Message thread interface
+   Props: {
+     messageField, senderNameField, senderAvatarField, timestampField,
+     allowReply, allowReactions, allowAttachments, realtime
+   }
+   Use for: Messaging, comments, discussions, support
+
+10. GALLERY - Image/card grid
+    Props: { imageField, titleField, descriptionField, columns: 3, aspectRatio: "1:1|16:9|4:3" }
+    Use for: Media galleries, product catalogs, portfolios
+
+11. TREE - Hierarchical list
+    Props: { titleField, parentField, iconField, expandable }
+    Use for: Categories, folders, org charts, nested navigation
+
+12. FILE-LIST - File management
+    Props: { nameField, sizeField, typeField, allowUpload, allowDownload, allowDelete }
+    Use for: Document management, attachments
+
+BLOCK SELECTION GUIDELINES:
+
+1. TASK/PROJECT MANAGEMENT → Use KANBAN as primary view
+   - Group tasks by status (backlog, todo, in_progress, done)
+   - Include card with title, description, assignee, due date
+   - Add TABLE view as secondary for list view
+
+2. SCHEDULING/CALENDAR APPS → Use CALENDAR as primary view
+   - Map events to start/end dates
+   - Color-code by category
+   - Include TIMELINE for upcoming events
+
+3. CHAT/MESSAGING APPS → Use CHAT as primary view
+   - Split layout with channel/contact list (TREE) + messages (CHAT)
+   - Enable realtime updates
+
+4. DASHBOARDS → Use GRID layout with multiple blocks
+   - STAT-CARDs for KPIs at top
+   - CHARTs for data visualization
+   - TABLE for recent items
+
+5. CRM/CONTACTS → Use TABLE + DETAIL combination
+   - Split view: TABLE on left, DETAIL on right
+   - TIMELINE for activity history
+
+6. INVENTORY/CATALOG → Use TABLE or GALLERY
+   - GALLERY for visual products
+   - TABLE for data-heavy inventory
+
+7. CONTENT/NOTES → Use TIMELINE or GALLERY
+   - Rich display of content items
+
+LAYOUT GUIDELINES:
+
+- "single": Full-width, stacked blocks (default)
+- "split": { "sizes": [30, 70], "direction": "horizontal" } - Master-detail pattern
+- "grid": { "columns": 4, "gap": "16px" } - Dashboard layouts
+- "tabs": { "tabs": [{ "id": "tab1", "label": "Tab 1" }] } - Multi-view pages
+
+ACTION EXAMPLES:
+
+- { "trigger": "cardClick", "action": "openModal", "config": { "modal": "detail-modal" } }
+- { "trigger": "rowClick", "action": "navigate", "config": { "route": "/items/{{id}}" } }
+- { "trigger": "submit", "action": "createRecord", "config": {} }
+- { "trigger": "cardMove", "action": "updateRecord", "config": { "field": "status" } }
+
+IMPORTANT RULES:
+- System columns (id, created_at, updated_at, created_by) are auto-added; don't include them in columns
 - Table names must be snake_case
 - App slug must be lowercase with hyphens only
-- Include at least 1 table, 1 role, and 1 resource
-- Every table should have a corresponding resource in ui.resources
+- Include at least 1 table and 1 page
 - Make the app practical and complete for the described use case
+- ALWAYS choose the most appropriate block type for the use case - don't default to TABLE
+- For task/project apps, USE KANBAN. For scheduling, USE CALENDAR. For chat, USE CHAT.
 """
 
 
@@ -114,7 +216,7 @@ class LLMService:
          "model": model,
          "messages": messages,
          "temperature": 0.7,
-         "max_tokens": 4000,
+         "max_tokens": 8000,
       }
 
       headers = {
@@ -184,7 +286,7 @@ Return ONLY the corrected valid JSON. No explanations."""
          "model": model,
          "messages": messages,
          "temperature": 0.3,  # Lower temperature for repairs
-         "max_tokens": 4000,
+         "max_tokens": 8000,
       }
 
       headers = {
@@ -218,4 +320,3 @@ Return ONLY the corrected valid JSON. No explanations."""
       blueprint_dict = json.loads(content)
 
       return blueprint_dict, request_payload, response_data
-

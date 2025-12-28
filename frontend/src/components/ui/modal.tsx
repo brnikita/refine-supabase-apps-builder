@@ -10,9 +10,24 @@ interface ModalProps {
    title?: string;
    children: React.ReactNode;
    className?: string;
+   size?: "small" | "medium" | "large" | "fullscreen";
 }
 
-export function Modal({ isOpen, onClose, title, children, className }: ModalProps) {
+const sizeClasses = {
+   small: "max-w-sm",
+   medium: "max-w-lg",
+   large: "max-w-3xl",
+   fullscreen: "max-w-[95vw] max-h-[95vh]",
+};
+
+export function Modal({
+   isOpen,
+   onClose,
+   title,
+   children,
+   className,
+   size = "medium",
+}: ModalProps) {
    const handleEscape = useCallback(
       (e: KeyboardEvent) => {
          if (e.key === "Escape") {
@@ -46,29 +61,30 @@ export function Modal({ isOpen, onClose, title, children, className }: ModalProp
          {/* Modal */}
          <div
             className={cn(
-               "relative z-10 w-full max-w-md mx-4",
+               "relative z-10 w-full mx-4",
+               sizeClasses[size],
+               size === "fullscreen" ? "h-[95vh] overflow-auto" : "",
                "gradient-card rounded-2xl p-6",
                "animate-fade-in",
                className
             )}
          >
             {/* Header */}
-            {title && (
-               <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold text-white">{title}</h2>
-                  <button
-                     onClick={onClose}
-                     className="p-1 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors"
-                  >
-                     <X className="w-5 h-5" />
-                  </button>
-               </div>
-            )}
+            <div className="flex items-center justify-between mb-4">
+               {title && <h2 className="text-lg font-semibold text-white">{title}</h2>}
+               <button
+                  onClick={onClose}
+                  className="p-1 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors ml-auto"
+               >
+                  <X className="w-5 h-5" />
+               </button>
+            </div>
 
             {/* Content */}
-            {children}
+            <div className={size === "fullscreen" ? "overflow-auto" : ""}>
+               {children}
+            </div>
          </div>
       </div>
    );
 }
-
