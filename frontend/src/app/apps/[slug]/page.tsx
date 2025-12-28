@@ -5,6 +5,8 @@ import { useParams } from "next/navigation";
 import { getRuntimeApp } from "@/lib/api";
 import { Loader2, AlertCircle, Power } from "lucide-react";
 import { RuntimeApp } from "@/components/runtime/RuntimeApp";
+import { RuntimeAppV2 } from "@/components/runtime/RuntimeAppV2";
+import { isBlueprintV2 } from "@/types/blueprint";
 
 interface RuntimeData {
    status: string;
@@ -84,6 +86,20 @@ export default function AppRuntimePage() {
       );
    }
 
+   // Use V2 runtime if blueprint is version 2
+   const isV2 = isBlueprintV2(runtimeData.blueprint);
+
+   if (isV2) {
+      return (
+         <RuntimeAppV2
+            app={runtimeData.app!}
+            blueprint={runtimeData.blueprint}
+            runtimeConfig={runtimeData.runtime_config!}
+         />
+      );
+   }
+
+   // Fall back to V1 runtime for legacy blueprints
    return (
       <RuntimeApp
          app={runtimeData.app!}
@@ -92,4 +108,3 @@ export default function AppRuntimePage() {
       />
    );
 }
-
