@@ -1,6 +1,8 @@
 import json
 import logging
 import re
+import random
+import string
 from typing import Optional, List, Tuple
 from uuid import UUID
 from datetime import datetime
@@ -45,6 +47,38 @@ class AppService:
       )
       return result.scalar_one_or_none()
 
+   async def _ensure_unique_slug(self, base_slug: str, exclude_app_id: Optional[UUID] = None) -> str:
+      """Ensure the slug is unique by appending a suffix if necessary."""
+      slug = base_slug
+      attempt = 0
+      max_attempts = 100
+
+      while attempt < max_attempts:
+         # Check if slug exists
+         query = select(App).where(App.slug == slug)
+         if exclude_app_id:
+            query = query.where(App.id != exclude_app_id)
+         
+         result = await self.db.execute(query)
+         existing = result.scalar_one_or_none()
+
+         if not existing:
+            return slug
+
+         # Generate a new slug with suffix
+         attempt += 1
+         if attempt <= 10:
+            # First try numeric suffixes
+            slug = f"{base_slug[:25]}-{attempt}"
+         else:
+            # Then try random suffixes
+            suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
+            slug = f"{base_slug[:25]}-{suffix}"
+
+      # Fallback: use timestamp
+      timestamp = datetime.utcnow().strftime("%H%M%S")
+      return f"{base_slug[:20]}-{timestamp}"
+
    async def generate_app(
       self,
       user_id: UUID,
@@ -59,6 +93,8 @@ class AppService:
       # Create a temporary app name and slug from prompt
       temp_name = prompt[:50].strip()
       temp_slug = self._generate_slug(temp_name)
+      # Ensure temp slug is unique
+      temp_slug = await self._ensure_unique_slug(temp_slug)
 
       # Create the app record
       app = App(
@@ -130,9 +166,16 @@ class AppService:
             return job.id, app.id
 
          # Blueprint is valid - update app with blueprint info
+         # Ensure the blueprint slug is unique
+         unique_slug = await self._ensure_unique_slug(blueprint.app.slug, exclude_app_id=app.id)
+         
          app.name = blueprint.app.name
-         app.slug = blueprint.app.slug
+         app.slug = unique_slug
          app.status = AppStatus.RUNNING
+
+         # Update the blueprint dict with the unique slug if it changed
+         if unique_slug != blueprint.app.slug:
+            blueprint_dict['app']['slug'] = unique_slug
 
          # Store blueprint
          app_blueprint = AppBlueprint(
@@ -149,7 +192,7 @@ class AppService:
          runtime_config = AppRuntimeConfig(
             app_id=app.id,
             db_schema=schema_name,
-            public_base_path=f"/apps/{blueprint.app.slug}",
+            public_base_path=f"/apps/{unique_slug}",
             enabled=True
          )
          self.db.add(runtime_config)
@@ -265,4 +308,3 @@ class AppService:
       slug = re.sub(r'-+', '-', slug)
       slug = slug.strip('-')
       return slug[:30] or "app"
-
