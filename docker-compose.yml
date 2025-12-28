@@ -1,0 +1,59 @@
+services:
+   db:
+      image: postgres:15-alpine
+      container_name: appsbuilder-db
+      environment:
+         POSTGRES_USER: postgres
+         POSTGRES_PASSWORD: postgres
+         POSTGRES_DB: appsbuilder
+      volumes:
+         - postgres_data:/var/lib/postgresql/data
+         - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      ports:
+         - "5432:5432"
+      healthcheck:
+         test: ["CMD-SHELL", "pg_isready -U postgres"]
+         interval: 5s
+         timeout: 5s
+         retries: 5
+
+   backend:
+      build:
+         context: ./backend
+         dockerfile: Dockerfile
+      container_name: appsbuilder-backend
+      environment:
+         - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/appsbuilder
+         - DATABASE_URL_SYNC=postgresql://postgres:postgres@db:5432/appsbuilder
+         - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+         - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
+         - DEBUG=true
+      ports:
+         - "8000:8000"
+      volumes:
+         - ./backend:/app
+      depends_on:
+         db:
+            condition: service_healthy
+      restart: unless-stopped
+
+   frontend:
+      build:
+         context: ./frontend
+         dockerfile: Dockerfile
+      container_name: appsbuilder-frontend
+      environment:
+         - NEXT_PUBLIC_API_URL=http://localhost:8000
+      ports:
+         - "3000:3000"
+      volumes:
+         - ./frontend:/app
+         - /app/node_modules
+         - /app/.next
+      depends_on:
+         - backend
+      restart: unless-stopped
+
+volumes:
+   postgres_data:
+

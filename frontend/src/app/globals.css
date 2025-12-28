@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+   --background: #0a0a0f;
+   --foreground: #e4e4e7;
+}
+
+body {
+   color: var(--foreground);
+   background: var(--background);
+   font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+   width: 8px;
+   height: 8px;
+}
+
+::-webkit-scrollbar-track {
+   background: rgba(255, 255, 255, 0.05);
+}
+
+::-webkit-scrollbar-thumb {
+   background: rgba(255, 255, 255, 0.2);
+   border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+   background: rgba(255, 255, 255, 0.3);
+}
+
+/* Gradient backgrounds */
+.gradient-bg {
+   background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 50%, #16213e 100%);
+}
+
+.gradient-card {
+   background: linear-gradient(145deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+   border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.gradient-button {
+   background: linear-gradient(135deg, #0ea5e9 0%, #d946ef 100%);
+}
+
+.gradient-button:hover {
+   background: linear-gradient(135deg, #0284c7 0%, #c026d3 100%);
+}
+
+/* Glass effect */
+.glass {
+   background: rgba(255, 255, 255, 0.05);
+   backdrop-filter: blur(10px);
+   border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Animations */
+@keyframes gradient-shift {
+   0%, 100% {
+      background-position: 0% 50%;
+   }
+   50% {
+      background-position: 100% 50%;
+   }
+}
+
+.animate-gradient {
+   background-size: 200% 200%;
+   animation: gradient-shift 8s ease infinite;
+}
+

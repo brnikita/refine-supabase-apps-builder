@@ -1,0 +1,40 @@
+{
+   "name": "blueprint-apps-builder",
+   "version": "0.1.0",
+   "private": true,
+   "scripts": {
+      "dev": "next dev",
+      "build": "next build",
+      "start": "next start",
+      "lint": "next lint"
+   },
+   "dependencies": {
+      "@refinedev/cli": "^2.16.21",
+      "@refinedev/core": "^4.47.1",
+      "@refinedev/nextjs-router": "^6.0.0",
+      "@refinedev/react-hook-form": "^4.8.14",
+      "@refinedev/react-table": "^5.6.6",
+      "@refinedev/simple-rest": "^5.0.1",
+      "@tanstack/react-table": "^8.11.2",
+      "next": "14.1.0",
+      "react": "^18.2.0",
+      "react-dom": "^18.2.0",
+      "react-hook-form": "^7.49.3",
+      "lucide-react": "^0.312.0",
+      "clsx": "^2.1.0",
+      "tailwind-merge": "^2.2.1",
+      "class-variance-authority": "^0.7.0"
+   },
+   "devDependencies": {
+      "@types/node": "^20.11.16",
+      "@types/react": "^18.2.52",
+      "@types/react-dom": "^18.2.18",
+      "autoprefixer": "^10.4.17",
+      "eslint": "^8.56.0",
+      "eslint-config-next": "14.1.0",
+      "postcss": "^8.4.33",
+      "tailwindcss": "^3.4.1",
+      "typescript": "^5.3.3"
+   }
+}
+
