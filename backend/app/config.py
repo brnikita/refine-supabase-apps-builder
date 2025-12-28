@@ -10,7 +10,7 @@ class Settings(BaseSettings):
    # OpenRouter
    OPENROUTER_API_KEY: str = ""
    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
-   DEFAULT_LLM_MODEL: str = "openai/gpt-4o-mini"
+   LLM_MODEL: str = "openai/gpt-4o-mini"
 
    # Auth
    SECRET_KEY: str = "your-secret-key-change-in-production"

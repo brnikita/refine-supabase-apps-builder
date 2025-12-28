@@ -92,7 +92,7 @@ class LLMService:
    def __init__(self):
       self.api_key = settings.OPENROUTER_API_KEY
       self.base_url = settings.OPENROUTER_BASE_URL
-      self.default_model = settings.DEFAULT_LLM_MODEL
+      self.default_model = settings.LLM_MODEL
 
    async def generate_blueprint(
       self,

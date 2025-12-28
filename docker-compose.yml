@@ -26,6 +26,7 @@ services:
          - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/appsbuilder
          - DATABASE_URL_SYNC=postgresql://postgres:postgres@db:5432/appsbuilder
          - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+         - LLM_MODEL=${LLM_MODEL:-openai/gpt-4o-mini}
          - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
          - DEBUG=true
       ports:
