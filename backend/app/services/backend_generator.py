@@ -446,6 +446,38 @@ export class {entity_name}Controller {{
     def _generate_service(self, entity_name: str, table) -> str:
         """Generate service for entity."""
         entity_lower = entity_name.lower()
+        
+        # Find date fields that need transformation
+        date_fields = [col.name for col in table.columns if col.type in ("date", "timestamptz")]
+        
+        # Generate date transformation code if there are date fields
+        if date_fields:
+            date_transform_code = '''
+  // Transform date strings to ISO-8601 DateTime format for Prisma
+  private transformDates(data: any): any {
+    const dateFields = ''' + str(date_fields) + ''';
+    const transformed = { ...data };
+    for (const field of dateFields) {
+      if (transformed[field] && typeof transformed[field] === 'string') {
+        // If it's a date-only string (YYYY-MM-DD), convert to full ISO DateTime
+        if (/^\\d{4}-\\d{2}-\\d{2}$/.test(transformed[field])) {
+          transformed[field] = new Date(transformed[field] + 'T00:00:00.000Z').toISOString();
+        } else if (!transformed[field].includes('T')) {
+          // If no time component, add one
+          transformed[field] = new Date(transformed[field]).toISOString();
+        }
+      }
+    }
+    return transformed;
+  }
+'''
+            create_data = "this.transformDates(createDto)"
+            update_data = "this.transformDates(updateDto)"
+        else:
+            date_transform_code = ""
+            create_data = "createDto"
+            update_data = "updateDto"
+        
         return f'''import {{ Injectable, NotFoundException }} from '@nestjs/common';
 import {{ PrismaService }} from '../prisma.service';
 import {{ Create{entity_name}Dto }} from './dto/create-{entity_lower}.dto';
@@ -460,7 +492,7 @@ interface FindAllOptions {{
 
 @Injectable()
 export class {entity_name}Service {{
-  constructor(private prisma: PrismaService) {{}}
+  constructor(private prisma: PrismaService) {{}}{date_transform_code}
 
   async findAll(options: FindAllOptions = {{}}) {{
     const start = options.start !== undefined && !isNaN(Number(options.start)) ? Number(options.start) : 0;
@@ -497,7 +529,7 @@ export class {entity_name}Service {{
 
   async create(createDto: Create{entity_name}Dto) {{
     return this.prisma.{entity_lower}.create({{
-      data: createDto,
+      data: {create_data},
     }});
   }}
 
@@ -505,7 +537,7 @@ export class {entity_name}Service {{
     try {{
       return await this.prisma.{entity_lower}.update({{
         where: {{ id }},
-        data: updateDto,
+        data: {update_data},
       }});
     }} catch (error) {{
       throw new NotFoundException(`{entity_name} with ID ${{id}} not found`);

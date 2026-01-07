@@ -1,5 +1,3 @@
-.env
-.env.local
 node_modules/
 __pycache__/
 *.pyc
@@ -9,3 +7,4 @@ build/
 *.log
 .DS_Store
 
+config.bat
