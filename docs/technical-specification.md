@@ -148,14 +148,14 @@
 ### 5) Blueprint Specification (Declarative "Brain")
 
 **Format:** JSON document validated by **JSON Schema** (stored as versioned contract in repo).
-**Naming:** `BlueprintV1`.
+**Naming:** `BlueprintV2`.
 
 #### 5.1 Top-level structure
 
 ```json
 {
-  "version": 1,
-  "app": { "name": "string", "slug": "string", "description": "string" },
+  "version": 2,
+  "app": { "name": "string", "slug": "string", "description": "string", "theme": { "primaryColor": "#hex", "mode": "dark|light" } },
   "data": {
     "tables": [ /* TableSpec[] */ ],
     "relationships": [ /* RelationshipSpec[] */ ]
@@ -167,8 +167,8 @@
   },
   "ui": {
     "navigation": [ /* NavItem[] */ ],
-    "resources": [ /* ResourceSpec[] */ ],
-    "pages": [ /* Optional custom pages for MVP: omit or minimal */ ]
+    "pages": [ /* PageSpec[] with blocks */ ],
+    "modals": [ /* ModalSpec[] */ ]
   }
 }
 ```
@@ -220,53 +220,61 @@
 
 **Restriction:** No arbitrary SQL in blueprint. Only allow predefined operators: `equals`, `and`, `or`, `in`.
 
-#### 5.5 UI resources
+#### 5.5 UI Pages & Blocks
 
-* `resources[]`:
+* `pages[]`:
 
-  * `name` (resource id)
-  * `table` (table name)
-  * `label`
-  * `views`: enable list/create/edit/show (bools)
-  * `list`:
+  * `id` (unique page id)
+  * `route` (URL path)
+  * `title` (page title)
+  * `icon` (optional icon name)
+  * `layout`: `{ type: "single|split|grid|tabs", config: {} }`
+  * `blocks[]`: array of UI blocks
 
-    * `columns[]` (names)
-    * `filters[]` (field + operator)
-  * `forms`:
+* Available block types:
+  * `TABLE` - Data grid with sorting, filtering, pagination
+  * `FORM` - Dynamic form for create/edit
+  * `DETAIL` - Single record display
+  * `STAT-CARD` - KPI metric card
+  * `CHART` - Various chart types (bar, line, pie, etc.)
+  * `KANBAN` - Drag-drop board
+  * `CALENDAR` - Event calendar
+  * `TIMELINE` - Chronological list
+  * `CHAT` - Message interface
+  * `GALLERY` - Image grid
+  * `TREE` - Hierarchical list
 
-    * `createFields[]`, `editFields[]` (field specs)
-    * field spec: `{ "name": "status", "widget": "select", "options": [...] }`
+* `modals[]`:
+  * `id`, `title`, `size`, `blocks[]`
 
 ---
 
-### 6) Runtime Implementation (Refine-based)
+### 6) Runtime Implementation
 
 **Runtime behavior**
 
 1. Load `apps/<slug>` → CP backend resolves `app_id`, status, and active blueprint version.
-2. Runtime fetches `BlueprintV1` JSON.
+2. Runtime fetches `BlueprintV2` JSON.
 3. Runtime dynamically constructs:
 
-   * Refine `<Refine resources={[...]} />` resources array
-   * Route tree (list/create/edit/show pages per resource)
+   * Page routes from `ui.pages`
+   * UI blocks from each page's `blocks[]`
    * Menu items from `ui.navigation`
-4. Runtime connects to data via Refine's Supabase data provider ([refine.dev][2])
+4. Runtime renders blocks using the block-based component system
 
 **Auth + Access Control**
 
-* Use Refine `authProvider` + `accessControlProvider`.
-* `accessControlProvider.can()` evaluates:
-
-  * `permissions[]` for action-level gating
+* Use `accessControlProvider.can()` to evaluate `permissions[]` for action-level gating
 * For row-level security:
 
   * MVP enforcement should be **in DB via RLS** (preferred) or in backend query layer.
-  * If using Supabase PostgREST, implement **RLS policies** per table based on `rowFilters[]`.
+  * Implement **RLS policies** per table based on `rowFilters[]`.
 
-**CRUD UI**
+**Block-based UI**
 
-* Use standard Refine components for List/Create/Edit/Show.
-* Optional: Refine Inferencer can accelerate dev for internal scaffolding, but MVP runtime should rely on blueprint-driven generic components (not generated code). (Inferencer exists to generate CRUD views from resources) ([refine.dev][5])
+* Each block type has a dedicated renderer component
+* Blocks receive data from `dataSource` configuration
+* Actions are handled through the action system (navigate, openModal, etc.)
 
 ---
 
@@ -285,15 +293,15 @@ When a blueprint is accepted:
    * enable RLS on each table
    * create policies per `rowFilters[]` + role mapping
 
-**MVP SQL Generation Rules**
+**SQL Generation Rules**
 
-* Column types mapped from `BlueprintV1` to Postgres types.
+* Column types mapped from `BlueprintV2` to Postgres types.
 * Only allowed constraints: `primary key`, `unique`, `not null`, `default`, `foreign key`.
-* No triggers except optional `updated_at` trigger (can be skipped in MVP; handle in UI).
+* No triggers except optional `updated_at` trigger (can be skipped; handle in UI).
 
 **Idempotency**
 
-* MVP approach: on blueprint v1 only, fail if schema already exists.
+* Current approach: fail if schema already exists.
 * Future: support migrations between blueprint versions.
 
 ---
@@ -309,15 +317,15 @@ When a blueprint is accepted:
 * Base URL: `https://openrouter.ai/api/v1` ([OpenRouter][3])
 * Optional headers: `HTTP-Referer`, `X-Title` ([OpenRouter][4])
 
-**Prompting contract (MVP)**
+**Prompting contract**
 
-* System prompt: "Return ONLY valid JSON that conforms to BlueprintV1. No prose."
-* Provide the **BlueprintV1 JSON Schema** in the prompt context (or a compact rules list).
+* System prompt: "Return ONLY valid JSON that conforms to BlueprintV2. No prose."
+* Provide the **BlueprintV2 JSON Schema** in the prompt context (or a compact rules list).
 * Add deterministic constraints:
 
   * Must include at least 1 table
   * Must include at least 1 role
-  * Must include ui.resources for each table
+  * Must include ui.pages with appropriate blocks for each table
 
 **Validation loop**
 
@@ -440,28 +448,28 @@ Base: `/api`
 
 ---
 
-### 14) Acceptance Criteria (MVP)
+### 14) Acceptance Criteria
 
 1. User can submit prompt and system creates:
 
    * an app record
-   * a valid BlueprintV1
+   * a valid BlueprintV2
    * DB schema + tables
 2. Apps list shows new app with status RUNNING or STOPPED.
-3. Open launches runtime and displays CRUD pages for declared resources.
+3. Open launches runtime and displays dynamic UI pages with blocks.
 4. Start/Stop toggles runtime accessibility.
 5. Delete removes the app and its DB schema.
 
 ---
 
-### 15) Minimal Delivery Plan (Implementation Order)
+### 15) Delivery Plan (Implementation Order)
 
 1. Implement CP DB tables + FastAPI endpoints (apps/list/generate/start/stop/delete).
 2. Implement OpenRouter LLM call + validation + retry repair.
 3. Implement SQL provisioning from blueprint (create schema/tables).
-4. Implement Runtime page that loads blueprint and registers Refine resources dynamically.
+4. Implement Runtime page that loads blueprint and renders block-based UI.
 5. Implement CP UI (Generate + List + Detail).
-6. Add basic RLS policies mapping roles → filters (MVP subset).
+6. Add basic RLS policies mapping roles → filters.
 
 [1]: https://refine.dev/docs/?utm_source=chatgpt.com "Overview"
 [2]: https://refine.dev/docs/data/packages/supabase/?utm_source=chatgpt.com "Supabase"

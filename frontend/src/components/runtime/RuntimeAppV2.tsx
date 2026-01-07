@@ -24,12 +24,12 @@ import {
    Clock,
    FolderTree,
 } from "lucide-react";
-import { BlueprintV2, PageSpec, ModalSpec, NavItem, isBlueprintV2 } from "@/types/blueprint";
+import { BlueprintV2, PageSpec, ModalSpec, NavItem } from "@/types/blueprint";
 import { LayoutRenderer } from "./LayoutRenderer";
 
 interface RuntimeAppV2Props {
    app: { id: string; name: string; slug: string };
-   blueprint: BlueprintV2 | any;
+   blueprint: BlueprintV2;
    runtimeConfig: { db_schema: string; base_path: string };
 }
 
@@ -61,9 +61,6 @@ export function RuntimeAppV2({ app, blueprint, runtimeConfig }: RuntimeAppV2Prop
    const [activeModal, setActiveModal] = useState<string | null>(null);
    const [pageVariables, setPageVariables] = useState<Record<string, any>>({});
    const [selectedRecord, setSelectedRecord] = useState<any>(null);
-
-   // Check if this is a V2 blueprint
-   const isV2 = isBlueprintV2(blueprint);
 
    // Generate mock data for all tables
    const mockData = useMemo(() => {
@@ -144,19 +141,17 @@ export function RuntimeAppV2({ app, blueprint, runtimeConfig }: RuntimeAppV2Prop
 
    // Get current page
    const currentPage = useMemo(() => {
-      if (!isV2) return null;
       return blueprint.ui?.pages?.find((p: PageSpec) => p.id === activePage) || null;
-   }, [blueprint, activePage, isV2]);
+   }, [blueprint, activePage]);
 
    // Get current modal
    const currentModal = useMemo(() => {
-      if (!activeModal || !isV2) return null;
+      if (!activeModal) return null;
       return blueprint.ui?.modals?.find((m: ModalSpec) => m.id === activeModal) || null;
-   }, [blueprint, activeModal, isV2]);
+   }, [blueprint, activeModal]);
 
    // Navigation items from pages
    const navItems = useMemo(() => {
-      if (!isV2) return [];
       if (blueprint.ui?.navigation?.length > 0) {
          return blueprint.ui.navigation;
       }
@@ -167,7 +162,7 @@ export function RuntimeAppV2({ app, blueprint, runtimeConfig }: RuntimeAppV2Prop
          icon: page.icon || "list",
          route: page.route,
       })) || [];
-   }, [blueprint, isV2]);
+   }, [blueprint]);
 
    // Context for blocks
    const context = useMemo(() => ({
@@ -289,22 +284,6 @@ export function RuntimeAppV2({ app, blueprint, runtimeConfig }: RuntimeAppV2Prop
          </button>
       );
    };
-
-   // If not V2 blueprint, show upgrade message
-   if (!isV2) {
-      return (
-         <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
-            <Card className="p-8 max-w-md text-center">
-               <Database className="w-12 h-12 text-primary-400 mx-auto mb-4" />
-               <h2 className="text-xl font-bold text-white mb-2">Legacy Blueprint</h2>
-               <p className="text-white/60 mb-4">
-                  This app uses Blueprint V1. Please regenerate to use the new dynamic UI system.
-               </p>
-               <Button onClick={() => window.history.back()}>Go Back</Button>
-            </Card>
-         </div>
-      );
-   }
 
    return (
       <div className="min-h-screen bg-[#0a0a0f]">

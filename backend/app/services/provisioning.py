@@ -3,7 +3,7 @@ from typing import Dict, Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.schemas.blueprint import BlueprintV1, TableSpec, ColumnSpec
+from app.schemas.blueprint import BlueprintV2, TableSpec, ColumnSpec
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class ProvisioningService:
    def __init__(self, db: Session):
       self.db = db
 
-   def provision_app_schema(self, schema_name: str, blueprint: BlueprintV1) -> None:
+   def provision_app_schema(self, schema_name: str, blueprint: BlueprintV2) -> None:
       """Create the database schema and tables for an app."""
       logger.info(f"Provisioning schema: {schema_name}")
 
