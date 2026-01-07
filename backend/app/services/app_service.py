@@ -240,7 +240,7 @@ class AppService:
          raise
 
    async def start_app(self, app_id: UUID, user_id: UUID) -> bool:
-      """Start an app (set status to RUNNING)."""
+      """Start an app (set status to RUNNING) and start backend container."""
       result = await self.db.execute(
          update(App)
          .where(App.id == app_id, App.owner_user_id == user_id)
@@ -253,11 +253,19 @@ class AppService:
             .values(enabled=True)
          )
          await self.db.commit()
+         
+         # Start the backend container if it exists
+         try:
+            await self.backend_generator.start_backend(app_id)
+            logger.info(f"Started backend container for app {app_id}")
+         except Exception as e:
+            logger.warning(f"Failed to start backend container for app {app_id}: {e}")
+         
          return True
       return False
 
    async def stop_app(self, app_id: UUID, user_id: UUID) -> bool:
-      """Stop an app (set status to STOPPED)."""
+      """Stop an app (set status to STOPPED) and stop backend container."""
       result = await self.db.execute(
          update(App)
          .where(App.id == app_id, App.owner_user_id == user_id)
@@ -270,6 +278,14 @@ class AppService:
             .values(enabled=False)
          )
          await self.db.commit()
+         
+         # Stop the backend container if it exists
+         try:
+            await self.backend_generator.stop_backend(app_id)
+            logger.info(f"Stopped backend container for app {app_id}")
+         except Exception as e:
+            logger.warning(f"Failed to stop backend container for app {app_id}: {e}")
+         
          return True
       return False
 
@@ -304,7 +320,14 @@ class AppService:
       except Exception as e:
          logger.error(f"Failed to delete generated backend: {e}")
 
-      # Delete the app (cascades to blueprints, jobs, runtime_config)
+      # Delete related records first (in correct order due to FK constraints)
+      # Delete blueprints
+      await self.db.execute(delete(AppBlueprint).where(AppBlueprint.app_id == app_id))
+      # Delete generation jobs
+      await self.db.execute(delete(GenerationJob).where(GenerationJob.app_id == app_id))
+      # Delete runtime config
+      await self.db.execute(delete(AppRuntimeConfig).where(AppRuntimeConfig.app_id == app_id))
+      # Delete the app
       await self.db.execute(delete(App).where(App.id == app_id))
       await self.db.commit()
 

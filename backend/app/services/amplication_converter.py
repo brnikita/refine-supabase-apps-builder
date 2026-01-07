@@ -210,33 +210,85 @@ class AmplicationConverter:
             "",
         ]
         
-        # Build relationship map
-        relationship_map = self._build_relationship_map(blueprint.data.relationships or [])
-        reverse_rel_map = self._build_reverse_relationship_map(blueprint.data.relationships or [])
+        # Build relationship maps
+        # many_to_one: fromTable has FK pointing to toTable
+        many_to_one_map: Dict[str, List[RelationshipSpec]] = {}
+        # reverse_relation_map: toTable has array of fromTable items (auto-generated from many_to_one)
+        reverse_relation_map: Dict[str, List[RelationshipSpec]] = {}
+        
+        for rel in (blueprint.data.relationships or []):
+            if rel.type == "many_to_one":
+                # Task (fromTable) has FK to Project (toTable)
+                if rel.fromTable not in many_to_one_map:
+                    many_to_one_map[rel.fromTable] = []
+                many_to_one_map[rel.fromTable].append(rel)
+                
+                # Auto-create reverse relation: Project needs tasks Task[]
+                if rel.toTable not in reverse_relation_map:
+                    reverse_relation_map[rel.toTable] = []
+                reverse_relation_map[rel.toTable].append(rel)
         
         for table in blueprint.data.tables:
             lines.append(f"model {table.name} {{")
             lines.append("  id        String   @id @default(cuid())")
             
-            # Add columns
+            # Collect column names to track what we've added
+            added_fields = {"id"}
+            
+            # Get relations for this table
+            many_to_one_rels = many_to_one_map.get(table.name, [])
+            # Get reverse relations (other tables pointing to this one)
+            reverse_rels = reverse_relation_map.get(table.name, [])
+            
+            # Find columns that should be skipped because they're handled by relations
+            columns_from_rels = set()
+            for rel in many_to_one_rels:
+                # Skip both the relation name and the FK column name
+                columns_from_rels.add(rel.name)  # e.g., "project"
+                columns_from_rels.add(f"{rel.name}Id")  # e.g., "projectId"
+            
+            # Add regular columns (excluding columns that will be handled by relations)
             for col in table.columns:
+                if col.name in added_fields:
+                    continue
+                # Skip columns that will be added with relations
+                if col.name in columns_from_rels:
+                    continue
+                    
                 prisma_type = self._to_prisma_type(col.type)
                 optional = "" if col.required else "?"
                 default = ""
                 if col.default is not None:
-                    default = f' @default("{col.default}")' if isinstance(col.default, str) else f" @default({col.default})"
+                    if isinstance(col.default, str):
+                        default = f' @default("{col.default}")'
+                    elif isinstance(col.default, bool):
+                        default = f" @default({str(col.default).lower()})"
+                    else:
+                        default = f" @default({col.default})"
                 unique = " @unique" if col.unique else ""
                 
                 lines.append(f"  {col.name}  {prisma_type}{optional}{default}{unique}")
+                added_fields.add(col.name)
             
-            # Add relationships (many-to-one)
-            for rel in relationship_map.get(table.name, []):
-                lines.append(f"  {rel.name}     {rel.toTable}?  @relation(fields: [{rel.name}Id], references: [id])")
-                lines.append(f"  {rel.name}Id   String?")
+            # Add many-to-one relationships (this table has FK to another table)
+            for rel in many_to_one_rels:
+                fk_column = f"{rel.name}Id"
+                # Add relation field with explicit relation name to avoid ambiguity
+                rel_name = f"{table.name}_{rel.name}"
+                lines.append(f"  {rel.name}    {rel.toTable}?  @relation(\"{rel_name}\", fields: [{fk_column}], references: [id])")
+                lines.append(f"  {fk_column}  String?")
+                added_fields.add(rel.name)
+                added_fields.add(fk_column)
             
-            # Add reverse relationships (one-to-many)
-            for rel in reverse_rel_map.get(table.name, []):
-                lines.append(f"  {rel.name}s    {rel.fromTable}[]")
+            # Add reverse relations (this table is referenced by other tables via many_to_one)
+            for rel in reverse_rels:
+                # rel is a many_to_one from another table pointing to this one
+                # We need to add an array field for the reverse relation
+                rel_name = f"{rel.fromTable}_{rel.name}"
+                # Use the fromTable name in lowercase + 's' as the field name
+                field_name = f"{rel.fromTable.lower()}s"
+                lines.append(f"  {field_name}  {rel.fromTable}[]  @relation(\"{rel_name}\")")
+                added_fields.add(field_name)
             
             # Add timestamps
             lines.append("  createdAt DateTime @default(now())")

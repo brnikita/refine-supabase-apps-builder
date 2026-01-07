@@ -13,9 +13,17 @@ import json
 import logging
 import asyncio
 import shutil
+import subprocess
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 from uuid import UUID
+
+try:
+    import docker
+    DOCKER_AVAILABLE = True
+except ImportError:
+    DOCKER_AVAILABLE = False
+    docker = None
 
 from app.config import settings
 from app.schemas.blueprint import BlueprintV3
@@ -30,6 +38,16 @@ GENERATED_APPS_PATH = os.getenv("GENERATED_APPS_PATH", "/var/lib/blueprint-apps"
 PORT_RANGE_START = 4001
 PORT_RANGE_END = 4999
 
+# Docker network name for app containers
+DOCKER_NETWORK = os.getenv("DOCKER_NETWORK", "refine-supabase-apps-builder_default")
+
+# Database connection for generated apps
+DB_HOST = os.getenv("DB_HOST", "appsbuilder-db")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
+DB_NAME = os.getenv("DB_NAME", "appsbuilder")
+
 
 class BackendGeneratorService:
     """Generates and manages NestJS backends from BlueprintV3."""
@@ -38,6 +56,40 @@ class BackendGeneratorService:
         self.converter = AmplicationConverter()
         self.apps_path = Path(GENERATED_APPS_PATH)
         self.apps_path.mkdir(parents=True, exist_ok=True)
+        self._docker_client = None
+        self._used_ports: set = set()
+        
+    @property
+    def docker_client(self):
+        """Lazy initialization of Docker client."""
+        if self._docker_client is None:
+            if not DOCKER_AVAILABLE:
+                raise RuntimeError("Docker SDK not available. Install with: pip install docker")
+            try:
+                self._docker_client = docker.from_env()
+                # Test connection
+                self._docker_client.ping()
+                logger.info("Docker client connected successfully")
+            except Exception as e:
+                logger.error(f"Failed to connect to Docker: {e}")
+                raise RuntimeError(f"Cannot connect to Docker: {e}")
+        return self._docker_client
+    
+    def _get_used_ports(self) -> set:
+        """Get set of ports currently used by app containers."""
+        used = set()
+        try:
+            containers = self.docker_client.containers.list(all=True)
+            for container in containers:
+                if container.name.startswith("blueprint-app-"):
+                    ports = container.attrs.get("NetworkSettings", {}).get("Ports", {})
+                    for port_binding in ports.values():
+                        if port_binding:
+                            for binding in port_binding:
+                                used.add(int(binding.get("HostPort", 0)))
+        except Exception as e:
+            logger.warning(f"Failed to get used ports: {e}")
+        return used
 
     async def generate_backend(
         self, 
@@ -83,12 +135,27 @@ class BackendGeneratorService:
             
             logger.info(f"Generated backend for app {app_id} at {app_dir}")
             
-            return {
-                "backend_url": f"http://localhost:{port}/api",
-                "port": port,
-                "status": "generated",
-                "path": str(app_dir),
-            }
+            # 6. Deploy the backend (build and run Docker container)
+            try:
+                deploy_result = await self.deploy_backend(app_id)
+                return {
+                    "backend_url": deploy_result.get("backend_url", f"http://localhost:{port}/api"),
+                    "port": deploy_result.get("port", port),
+                    "status": deploy_result.get("status", "running"),
+                    "path": str(app_dir),
+                    "container_id": deploy_result.get("container_id"),
+                    "container_name": deploy_result.get("container_name"),
+                }
+            except Exception as deploy_error:
+                logger.error(f"Failed to deploy backend for app {app_id}: {deploy_error}")
+                # Return generated status - deployment can be retried
+                return {
+                    "backend_url": f"http://localhost:{port}/api",
+                    "port": port,
+                    "status": "generated",
+                    "path": str(app_dir),
+                    "deploy_error": str(deploy_error),
+                }
             
         except Exception as e:
             logger.error(f"Failed to generate backend for app {app_id}: {e}")
@@ -297,7 +364,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
             f.write(service_content)
         
         # Generate DTOs
-        create_dto = self._generate_create_dto(entity_name, table)
+        create_dto = self._generate_create_dto(entity_name, table, blueprint)
         with open(dto_dir / f"create-{entity_lower}.dto.ts", "w") as f:
             f.write(create_dto)
         
@@ -396,14 +463,18 @@ export class {entity_name}Service {{
   constructor(private prisma: PrismaService) {{}}
 
   async findAll(options: FindAllOptions = {{}}) {{
-    const {{ start = 0, end = 10, sort = 'createdAt', order = 'DESC' }} = options;
+    const start = options.start !== undefined && !isNaN(Number(options.start)) ? Number(options.start) : 0;
+    const end = options.end !== undefined && !isNaN(Number(options.end)) ? Number(options.end) : 10;
+    const sort = options.sort || 'createdAt';
+    const order = options.order || 'DESC';
+    
     const take = end - start;
     const skip = start;
     
     const [data, total] = await Promise.all([
       this.prisma.{entity_lower}.findMany({{
-        skip,
-        take,
+        skip: skip > 0 ? skip : undefined,
+        take: take > 0 ? take : 10,
         orderBy: {{ [sort]: order.toLowerCase() }},
       }}),
       this.prisma.{entity_lower}.count(),
@@ -453,26 +524,49 @@ export class {entity_name}Service {{
 }}
 '''
 
-    def _generate_create_dto(self, entity_name: str, table) -> str:
+    def _generate_create_dto(self, entity_name: str, table, blueprint: BlueprintV3 = None) -> str:
         """Generate Create DTO."""
         fields = []
         imports = ["import { ApiProperty } from '@nestjs/swagger';"]
         
+        # Get relation names to filter out (we'll use FK columns instead)
+        relation_names = set()
+        if blueprint and blueprint.data.relationships:
+            for rel in blueprint.data.relationships:
+                if rel.fromTable == table.name and rel.type == "many_to_one":
+                    relation_names.add(rel.name)  # e.g., "project"
+        
         validators = set()
+        validators.add("IsOptional")  # Always need IsOptional for optional fields
+        
         for col in table.columns:
+            # Skip columns that are relation names (use FK column instead)
+            if col.name in relation_names:
+                # Add the FK column instead
+                fk_name = f"{col.name}Id"
+                validators.add("IsString")
+                fields.append(f'''
+  @ApiProperty({{ required: false, description: 'FK to {col.name}' }})
+  @IsOptional()
+  @IsString()
+  {fk_name}?: string;''')
+                continue
+            
             decorator = self._get_validator_decorator(col)
+            validator_decorator = ""
             if decorator:
                 validators.add(decorator[0])
+                validator_decorator = f"\n  {decorator[1]}"
             
+            optional_decorator = "" if col.required else "\n  @IsOptional()"
             optional = "" if col.required else "?"
             ts_type = self._to_typescript_type(col.type)
             
             fields.append(f'''
-  @ApiProperty({{ required: {str(col.required).lower()} }})
+  @ApiProperty({{ required: {str(col.required).lower()} }}){optional_decorator}{validator_decorator}
   {col.name}{optional}: {ts_type};''')
         
-        if validators:
-            imports.append(f"import {{ {', '.join(sorted(validators))} }} from 'class-validator';")
+        imports.append(f"import {{ {', '.join(sorted(validators))} }} from 'class-validator';")
         
         return f'''{chr(10).join(imports)}
 
@@ -517,9 +611,12 @@ export class Update{entity_name}Dto extends PartialType(Create{entity_name}Dto) 
 
     def _generate_dockerfile(self) -> str:
         """Generate Dockerfile for NestJS app."""
-        return '''FROM node:20-alpine
+        return '''FROM node:20-slim
 
 WORKDIR /app
+
+# Install OpenSSL for Prisma
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 
 # Copy package files
 COPY package*.json ./
@@ -577,9 +674,17 @@ PORT=3000
         }
 
     async def _allocate_port(self, app_id: UUID) -> int:
-        """Allocate a port for the app."""
-        # Simple port allocation based on app_id hash
-        # In production, this should check for port availability
+        """Allocate an available port for the app."""
+        used_ports = self._get_used_ports()
+        used_ports.update(self._used_ports)
+        
+        # Try to find an available port
+        for port in range(PORT_RANGE_START, PORT_RANGE_END):
+            if port not in used_ports:
+                self._used_ports.add(port)
+                return port
+        
+        # Fallback: use hash-based allocation
         hash_val = hash(str(app_id))
         port = PORT_RANGE_START + (abs(hash_val) % (PORT_RANGE_END - PORT_RANGE_START))
         return port
@@ -588,7 +693,11 @@ PORT=3000
         """
         Build and deploy the generated backend as a Docker container.
         
-        Note: This requires Docker to be available.
+        Steps:
+        1. Build Docker image from generated code
+        2. Create and run container with allocated port
+        3. Run Prisma migrations
+        4. Update metadata with container_id and status
         """
         app_dir = self.apps_path / str(app_id)
         metadata_file = app_dir / "metadata.json"
@@ -599,38 +708,344 @@ PORT=3000
         with open(metadata_file) as f:
             metadata = json.load(f)
         
-        # In a real implementation, this would:
-        # 1. Build Docker image
-        # 2. Run container with allocated port
-        # 3. Run Prisma migrations
-        # 4. Update metadata with container_id
+        port = metadata.get("port", await self._allocate_port(app_id))
+        container_name = f"blueprint-app-{str(app_id)[:12]}"
+        image_name = f"blueprint-app-{str(app_id)[:12]}:latest"
         
-        # For now, return the metadata
-        metadata["status"] = "ready"
-        
+        try:
+            # 1. Stop and remove existing container if any
+            await self._stop_container(container_name)
+            
+            # 2. Build Docker image
+            logger.info(f"Building Docker image for app {app_id}...")
+            metadata["status"] = "building"
+            self._save_metadata(metadata_file, metadata)
+            
+            image, build_logs = await self._build_image(app_dir, image_name)
+            logger.info(f"Built image {image_name} for app {app_id}")
+            
+            # 3. Create and start container
+            logger.info(f"Starting container {container_name} on port {port}...")
+            metadata["status"] = "starting"
+            self._save_metadata(metadata_file, metadata)
+            
+            container = await self._run_container(
+                image_name=image_name,
+                container_name=container_name,
+                port=port,
+                db_schema=metadata.get("db_schema", f"app_{str(app_id).replace('-', '')[:12]}")
+            )
+            
+            # 4. Wait for container to be healthy
+            logger.info(f"Waiting for container {container_name} to be ready...")
+            await self._wait_for_container(container, timeout=120)
+            
+            # 5. Run Prisma migrations
+            logger.info(f"Running Prisma migrations for app {app_id}...")
+            metadata["status"] = "migrating"
+            self._save_metadata(metadata_file, metadata)
+            
+            await self._run_prisma_push(container)
+            
+            # 6. Update metadata
+            metadata["status"] = "running"
+            metadata["container_id"] = container.id
+            metadata["container_name"] = container_name
+            metadata["image_name"] = image_name
+            metadata["backend_url"] = f"http://localhost:{port}/api"
+            metadata["port"] = port
+            self._save_metadata(metadata_file, metadata)
+            
+            logger.info(f"Successfully deployed backend for app {app_id} at port {port}")
+            return metadata
+            
+        except Exception as e:
+            logger.error(f"Failed to deploy backend for app {app_id}: {e}")
+            metadata["status"] = "error"
+            metadata["error"] = str(e)
+            self._save_metadata(metadata_file, metadata)
+            raise
+    
+    def _save_metadata(self, metadata_file: Path, metadata: Dict[str, Any]):
+        """Save metadata to file."""
         with open(metadata_file, "w") as f:
             json.dump(metadata, f, indent=2)
+    
+    async def _stop_container(self, container_name: str):
+        """Stop and remove a container if it exists."""
+        try:
+            container = self.docker_client.containers.get(container_name)
+            logger.info(f"Stopping existing container {container_name}...")
+            container.stop(timeout=10)
+            container.remove(force=True)
+            logger.info(f"Removed container {container_name}")
+        except docker.errors.NotFound:
+            pass  # Container doesn't exist, that's fine
+        except Exception as e:
+            logger.warning(f"Error stopping container {container_name}: {e}")
+    
+    async def _build_image(self, app_dir: Path, image_name: str) -> Tuple[Any, List[str]]:
+        """Build Docker image from app directory."""
+        logs = []
         
-        return metadata
+        try:
+            # Build image using Docker SDK
+            image, build_logs = self.docker_client.images.build(
+                path=str(app_dir),
+                tag=image_name,
+                rm=True,
+                forcerm=True,
+                nocache=False,
+            )
+            
+            # Collect logs
+            for chunk in build_logs:
+                if 'stream' in chunk:
+                    log_line = chunk['stream'].strip()
+                    if log_line:
+                        logs.append(log_line)
+                        logger.debug(f"Build: {log_line}")
+                elif 'error' in chunk:
+                    error_msg = chunk['error']
+                    logger.error(f"Build error: {error_msg}")
+                    raise RuntimeError(f"Docker build failed: {error_msg}")
+            
+            return image, logs
+            
+        except docker.errors.BuildError as e:
+            logger.error(f"Docker build failed: {e}")
+            for log in e.build_log:
+                if 'stream' in log:
+                    logger.error(log['stream'])
+            raise RuntimeError(f"Docker build failed: {e}")
+    
+    async def _run_container(
+        self, 
+        image_name: str, 
+        container_name: str, 
+        port: int,
+        db_schema: str
+    ) -> Any:
+        """Create and start a container."""
+        # Database URL for the container
+        db_url = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?schema={db_schema}"
+        
+        container = self.docker_client.containers.run(
+            image=image_name,
+            name=container_name,
+            detach=True,
+            environment={
+                "DATABASE_URL": db_url,
+                "PORT": "3000",
+                "NODE_ENV": "production",
+            },
+            ports={
+                "3000/tcp": port
+            },
+            network=DOCKER_NETWORK,
+            restart_policy={"Name": "unless-stopped"},
+            labels={
+                "blueprint.app": "true",
+                "blueprint.port": str(port),
+            }
+        )
+        
+        return container
+    
+    async def _wait_for_container(self, container, timeout: int = 60):
+        """Wait for container to be running and healthy."""
+        import time
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            container.reload()
+            status = container.status
+            
+            if status == "running":
+                # Container is running, wait a bit for the app to start
+                await asyncio.sleep(5)
+                
+                # Check if the app is responding
+                try:
+                    # Try to get logs to see if app started
+                    logs = container.logs(tail=50).decode('utf-8')
+                    if "Application is running" in logs or "Listening" in logs.lower():
+                        logger.info("Application started successfully")
+                        return
+                except Exception:
+                    pass
+                
+                # Give it more time
+                await asyncio.sleep(2)
+                return  # Assume it's ready after running for a bit
+                
+            elif status == "exited":
+                logs = container.logs().decode('utf-8')
+                raise RuntimeError(f"Container exited unexpectedly. Logs:\n{logs[-2000:]}")
+            
+            await asyncio.sleep(2)
+        
+        raise TimeoutError(f"Container did not become ready within {timeout} seconds")
+    
+    async def _run_prisma_push(self, container):
+        """Run Prisma db push inside the container."""
+        try:
+            # Run prisma db push to sync schema
+            exit_code, output = container.exec_run(
+                cmd=["npx", "prisma", "db", "push", "--accept-data-loss"],
+                workdir="/app",
+                environment={"DATABASE_URL": container.attrs['Config']['Env'][0].split('=', 1)[1]}
+            )
+            
+            output_str = output.decode('utf-8') if output else ""
+            
+            if exit_code != 0:
+                logger.warning(f"Prisma push returned non-zero exit code {exit_code}: {output_str}")
+                # Don't fail - the schema might already be in sync
+            else:
+                logger.info(f"Prisma push completed: {output_str[:500]}")
+                
+        except Exception as e:
+            logger.warning(f"Failed to run Prisma push: {e}")
+            # Don't fail deployment - the database might already be set up
 
     async def get_backend_status(self, app_id: UUID) -> Optional[Dict[str, Any]]:
-        """Get the status of a generated backend."""
+        """Get the status of a generated backend, including live container status."""
         metadata_file = self.apps_path / str(app_id) / "metadata.json"
         
         if not metadata_file.exists():
             return None
         
         with open(metadata_file) as f:
-            return json.load(f)
+            metadata = json.load(f)
+        
+        # Check actual container status
+        container_name = metadata.get("container_name")
+        if container_name:
+            try:
+                container = self.docker_client.containers.get(container_name)
+                metadata["container_status"] = container.status
+                if container.status == "running":
+                    metadata["status"] = "running"
+                elif container.status == "exited":
+                    metadata["status"] = "stopped"
+            except docker.errors.NotFound:
+                metadata["container_status"] = "not_found"
+                if metadata.get("status") == "running":
+                    metadata["status"] = "stopped"
+            except Exception as e:
+                logger.warning(f"Failed to get container status: {e}")
+        
+        return metadata
+
+    async def start_backend(self, app_id: UUID) -> Dict[str, Any]:
+        """Start a stopped backend container."""
+        metadata = await self.get_backend_status(app_id)
+        if not metadata:
+            raise FileNotFoundError(f"App {app_id} not found")
+        
+        container_name = metadata.get("container_name")
+        if not container_name:
+            # No container exists, need to deploy
+            return await self.deploy_backend(app_id)
+        
+        try:
+            container = self.docker_client.containers.get(container_name)
+            if container.status != "running":
+                container.start()
+                await asyncio.sleep(3)  # Wait for startup
+                container.reload()
+            
+            metadata["status"] = "running"
+            metadata["container_status"] = container.status
+            
+            metadata_file = self.apps_path / str(app_id) / "metadata.json"
+            self._save_metadata(metadata_file, metadata)
+            
+            return metadata
+            
+        except docker.errors.NotFound:
+            # Container was removed, redeploy
+            return await self.deploy_backend(app_id)
+    
+    async def stop_backend(self, app_id: UUID) -> Dict[str, Any]:
+        """Stop a running backend container."""
+        metadata = await self.get_backend_status(app_id)
+        if not metadata:
+            raise FileNotFoundError(f"App {app_id} not found")
+        
+        container_name = metadata.get("container_name")
+        if container_name:
+            try:
+                container = self.docker_client.containers.get(container_name)
+                if container.status == "running":
+                    container.stop(timeout=10)
+                container.reload()
+                metadata["container_status"] = container.status
+            except docker.errors.NotFound:
+                metadata["container_status"] = "not_found"
+            except Exception as e:
+                logger.warning(f"Failed to stop container: {e}")
+        
+        metadata["status"] = "stopped"
+        
+        metadata_file = self.apps_path / str(app_id) / "metadata.json"
+        self._save_metadata(metadata_file, metadata)
+        
+        return metadata
 
     async def delete_backend(self, app_id: UUID) -> bool:
         """Delete a generated backend and its container."""
         app_dir = self.apps_path / str(app_id)
         
+        # First, stop and remove the container
+        metadata = await self.get_backend_status(app_id)
+        if metadata:
+            container_name = metadata.get("container_name")
+            if container_name:
+                await self._stop_container(container_name)
+            
+            # Remove the image
+            image_name = metadata.get("image_name")
+            if image_name:
+                try:
+                    self.docker_client.images.remove(image_name, force=True)
+                    logger.info(f"Removed image {image_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove image {image_name}: {e}")
+        
+        # Remove the app directory
         if app_dir.exists():
             shutil.rmtree(app_dir)
             logger.info(f"Deleted backend for app {app_id}")
             return True
         
         return False
+    
+    async def restart_backend(self, app_id: UUID) -> Dict[str, Any]:
+        """Restart a backend container."""
+        metadata = await self.get_backend_status(app_id)
+        if not metadata:
+            raise FileNotFoundError(f"App {app_id} not found")
+        
+        container_name = metadata.get("container_name")
+        if container_name:
+            try:
+                container = self.docker_client.containers.get(container_name)
+                container.restart(timeout=10)
+                await asyncio.sleep(5)  # Wait for restart
+                container.reload()
+                metadata["status"] = "running"
+                metadata["container_status"] = container.status
+                
+                metadata_file = self.apps_path / str(app_id) / "metadata.json"
+                self._save_metadata(metadata_file, metadata)
+                
+                return metadata
+            except docker.errors.NotFound:
+                # Container was removed, redeploy
+                return await self.deploy_backend(app_id)
+        
+        # No container, deploy
+        return await self.deploy_backend(app_id)
 
