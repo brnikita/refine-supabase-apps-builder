@@ -5,7 +5,7 @@ import logging
 from typing import Dict, Any, List, Tuple, Optional
 from pydantic import ValidationError
 
-from app.schemas.blueprint import BlueprintV1
+from app.schemas.blueprint import BlueprintV2
 
 logger = logging.getLogger(__name__)
 
@@ -17,16 +17,16 @@ SLUG_PATTERN = re.compile(r'^[a-z][a-z0-9-]{0,30}$')
 class BlueprintService:
    """Service for validating and processing blueprints."""
 
-   def validate_blueprint(self, blueprint_dict: Dict[str, Any]) -> Tuple[bool, Optional[BlueprintV1], List[str]]:
+   def validate_blueprint(self, blueprint_dict: Dict[str, Any]) -> Tuple[bool, Optional[BlueprintV2], List[str]]:
       """
-      Validate a blueprint dictionary against the BlueprintV1 schema.
+      Validate a blueprint dictionary against the BlueprintV2 schema.
       Returns: (is_valid, parsed_blueprint, errors)
       """
       errors = []
 
       # First, try Pydantic validation
       try:
-         blueprint = BlueprintV1(**blueprint_dict)
+         blueprint = BlueprintV2(**blueprint_dict)
       except ValidationError as e:
          for error in e.errors():
             loc = " -> ".join(str(x) for x in error["loc"])
@@ -36,7 +36,7 @@ class BlueprintService:
       # Additional semantic validations
       errors.extend(self._validate_identifiers(blueprint))
       errors.extend(self._validate_relationships(blueprint))
-      errors.extend(self._validate_resources(blueprint))
+      errors.extend(self._validate_pages(blueprint))
       errors.extend(self._validate_permissions(blueprint))
 
       if errors:
@@ -44,7 +44,7 @@ class BlueprintService:
 
       return True, blueprint, []
 
-   def _validate_identifiers(self, blueprint: BlueprintV1) -> List[str]:
+   def _validate_identifiers(self, blueprint: BlueprintV2) -> List[str]:
       """Validate that all identifiers match the required pattern."""
       errors = []
 
@@ -64,7 +64,7 @@ class BlueprintService:
 
       return errors
 
-   def _validate_relationships(self, blueprint: BlueprintV1) -> List[str]:
+   def _validate_relationships(self, blueprint: BlueprintV2) -> List[str]:
       """Validate that relationships reference existing tables and columns."""
       errors = []
       table_names = {t.name for t in blueprint.data.tables}
@@ -77,18 +77,19 @@ class BlueprintService:
 
       return errors
 
-   def _validate_resources(self, blueprint: BlueprintV1) -> List[str]:
-      """Validate that resources reference existing tables."""
+   def _validate_pages(self, blueprint: BlueprintV2) -> List[str]:
+      """Validate that pages reference existing tables in data sources."""
       errors = []
       table_names = {t.name for t in blueprint.data.tables}
 
-      for resource in blueprint.ui.resources:
-         if resource.table not in table_names:
-            errors.append(f"Resource '{resource.name}' references non-existent table '{resource.table}'")
+      for page in blueprint.ui.pages:
+         for block in page.blocks:
+            if block.dataSource and block.dataSource.table not in table_names:
+               errors.append(f"Block '{block.id}' in page '{page.id}' references non-existent table '{block.dataSource.table}'")
 
       return errors
 
-   def _validate_permissions(self, blueprint: BlueprintV1) -> List[str]:
+   def _validate_permissions(self, blueprint: BlueprintV2) -> List[str]:
       """Validate that permissions reference existing roles and resources."""
       errors = []
       roles = set(blueprint.security.roles)
@@ -107,7 +108,7 @@ class BlueprintService:
       json_str = json.dumps(blueprint_dict, sort_keys=True)
       return hashlib.sha256(json_str.encode()).hexdigest()
 
-   def get_tables_in_dependency_order(self, blueprint: BlueprintV1) -> List[str]:
+   def get_tables_in_dependency_order(self, blueprint: BlueprintV2) -> List[str]:
       """
       Return table names in order that respects foreign key dependencies.
       Tables without FKs come first.

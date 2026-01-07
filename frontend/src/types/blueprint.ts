@@ -368,43 +368,11 @@ export interface BlueprintV2 {
    ui: UISpec;
 }
 
-// --- Legacy V1 Support ---
+// Alias for backwards compatibility
+export type Blueprint = BlueprintV2;
 
-export interface ResourceSpec {
-   name: string;
-   table: string;
-   label: string;
-   views?: Record<string, boolean>;
-   list?: { columns: string[] };
-   forms?: {
-      createFields?: { name: string; widget?: string; label?: string; options?: any[] }[];
-      editFields?: { name: string; widget?: string; label?: string; options?: any[] }[];
-   };
-}
-
-export interface UISpecV1 {
-   navigation: NavItem[];
-   resources: ResourceSpec[];
-   pages?: any[];
-}
-
-export interface BlueprintV1 {
-   version: 1;
-   app: AppInfo;
-   data: DataSpec;
-   security: SecuritySpec;
-   ui: UISpecV1;
-}
-
-// Union type for both versions
-export type Blueprint = BlueprintV1 | BlueprintV2;
-
-// Type guard to check blueprint version
-export function isBlueprintV2(blueprint: Blueprint): blueprint is BlueprintV2 {
-   return blueprint.version === 2 && 'pages' in blueprint.ui;
-}
-
-export function isBlueprintV1(blueprint: Blueprint): blueprint is BlueprintV1 {
-   return blueprint.version === 1 || 'resources' in blueprint.ui;
+// Type guard to check if blueprint is valid V2
+export function isBlueprintV2(blueprint: any): blueprint is BlueprintV2 {
+   return blueprint && blueprint.version === 2 && 'pages' in blueprint.ui;
 }
 

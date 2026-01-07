@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { getRuntimeApp } from "@/lib/api";
 import { Loader2, AlertCircle, Power } from "lucide-react";
-import { RuntimeApp } from "@/components/runtime/RuntimeApp";
 import { RuntimeAppV2 } from "@/components/runtime/RuntimeAppV2";
 import { isBlueprintV2 } from "@/types/blueprint";
 
@@ -86,22 +85,21 @@ export default function AppRuntimePage() {
       );
    }
 
-   // Use V2 runtime if blueprint is version 2
-   const isV2 = isBlueprintV2(runtimeData.blueprint);
-
-   if (isV2) {
+   // Validate that blueprint is V2
+   if (!isBlueprintV2(runtimeData.blueprint)) {
       return (
-         <RuntimeAppV2
-            app={runtimeData.app!}
-            blueprint={runtimeData.blueprint}
-            runtimeConfig={runtimeData.runtime_config!}
-         />
+         <div className="min-h-screen gradient-bg flex items-center justify-center">
+            <div className="text-center">
+               <AlertCircle className="w-16 h-16 text-amber-400 mx-auto mb-4" />
+               <h1 className="text-2xl font-bold text-white mb-2">Invalid Blueprint</h1>
+               <p className="text-white/60">This app has an invalid or outdated blueprint format.</p>
+            </div>
+         </div>
       );
    }
 
-   // Fall back to V1 runtime for legacy blueprints
    return (
-      <RuntimeApp
+      <RuntimeAppV2
          app={runtimeData.app!}
          blueprint={runtimeData.blueprint}
          runtimeConfig={runtimeData.runtime_config!}

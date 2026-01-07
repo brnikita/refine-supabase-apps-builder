@@ -27,7 +27,7 @@ class AppBlueprint(Base):
       ForeignKey("control_plane.apps.id"),
       nullable=False
    )
-   version: Mapped[int] = mapped_column(Integer, default=1)
+   version: Mapped[int] = mapped_column(Integer, default=2)
    blueprint_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
    blueprint_hash: Mapped[str] = mapped_column(String(64), nullable=True)
    validation_status: Mapped[ValidationStatus] = mapped_column(

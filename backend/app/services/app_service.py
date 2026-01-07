@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, update, delete
 
 from app.models import App, AppStatus, AppBlueprint, ValidationStatus, GenerationJob, JobStatus, AppRuntimeConfig
-from app.schemas.blueprint import BlueprintV1
+from app.schemas.blueprint import BlueprintV2
 from app.services.llm import LLMService
 from app.services.blueprint import BlueprintService
 from app.services.provisioning import ProvisioningService
@@ -150,7 +150,7 @@ class AppService:
             # Store invalid blueprint and fail
             app_blueprint = AppBlueprint(
                app_id=app.id,
-               version=1,
+               version=2,
                blueprint_json=blueprint_dict,
                blueprint_hash=self.blueprint_service.compute_hash(blueprint_dict),
                validation_status=ValidationStatus.INVALID,
@@ -180,7 +180,7 @@ class AppService:
          # Store blueprint
          app_blueprint = AppBlueprint(
             app_id=app.id,
-            version=1,
+            version=2,
             blueprint_json=blueprint_dict,
             blueprint_hash=self.blueprint_service.compute_hash(blueprint_dict),
             validation_status=ValidationStatus.VALID
