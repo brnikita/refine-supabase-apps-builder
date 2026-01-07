@@ -3,7 +3,7 @@ import logging
 import re
 import random
 import string
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Union
 from uuid import UUID
 from datetime import datetime
 
@@ -12,10 +12,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, update, delete
 
 from app.models import App, AppStatus, AppBlueprint, ValidationStatus, GenerationJob, JobStatus, AppRuntimeConfig
-from app.schemas.blueprint import BlueprintV2
+from app.schemas.blueprint import BlueprintV2, BlueprintV3
 from app.services.llm import LLMService
 from app.services.blueprint import BlueprintService
 from app.services.provisioning import ProvisioningService
+from app.services.backend_generator import BackendGeneratorService
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class AppService:
       self.db = db
       self.llm_service = LLMService()
       self.blueprint_service = BlueprintService()
+      self.backend_generator = BackendGeneratorService()
 
    async def list_apps(self, user_id: UUID) -> List[App]:
       """List all apps for a user."""
@@ -84,7 +86,8 @@ class AppService:
       user_id: UUID,
       prompt: str,
       model: Optional[str] = None,
-      sync_db: Session = None
+      sync_db: Session = None,
+      version: int = 3  # Default to V3
    ) -> Tuple[UUID, UUID]:
       """
       Generate a new app from a prompt.
@@ -117,9 +120,9 @@ class AppService:
       await self.db.flush()
 
       try:
-         # Generate blueprint via LLM
+         # Generate blueprint via LLM (now generates V3)
          blueprint_dict, llm_request, llm_response = await self.llm_service.generate_blueprint(
-            prompt, model
+            prompt, model, version=version
          )
 
          # Update job with LLM data
@@ -137,7 +140,8 @@ class AppService:
                   prompt,
                   json.dumps(blueprint_dict, indent=2),
                   "\n".join(errors),
-                  model
+                  model,
+                  version=version
                )
                job.llm_request = repair_request
                job.llm_response = repair_response
@@ -150,7 +154,7 @@ class AppService:
             # Store invalid blueprint and fail
             app_blueprint = AppBlueprint(
                app_id=app.id,
-               version=2,
+               version=version,
                blueprint_json=blueprint_dict,
                blueprint_hash=self.blueprint_service.compute_hash(blueprint_dict),
                validation_status=ValidationStatus.INVALID,
@@ -180,7 +184,7 @@ class AppService:
          # Store blueprint
          app_blueprint = AppBlueprint(
             app_id=app.id,
-            version=2,
+            version=version,
             blueprint_json=blueprint_dict,
             blueprint_hash=self.blueprint_service.compute_hash(blueprint_dict),
             validation_status=ValidationStatus.VALID
@@ -189,6 +193,23 @@ class AppService:
 
          # Create runtime config
          schema_name = f"app_{str(app.id).replace('-', '')[:12]}"
+         
+         # For V3, generate backend and get the URL
+         backend_url = None
+         backend_port = None
+         
+         if version == 3 and isinstance(blueprint, BlueprintV3):
+            try:
+               backend_result = await self.backend_generator.generate_backend(
+                  app.id, blueprint, schema_name
+               )
+               backend_url = backend_result.get("backend_url")
+               backend_port = backend_result.get("port")
+               logger.info(f"Generated backend for app {app.id}: {backend_url}")
+            except Exception as e:
+               logger.error(f"Failed to generate backend: {e}")
+               # Continue without backend - app will use mock data
+
          runtime_config = AppRuntimeConfig(
             app_id=app.id,
             db_schema=schema_name,
@@ -199,8 +220,8 @@ class AppService:
 
          await self.db.commit()
 
-         # Provision database schema (sync operation)
-         if sync_db:
+         # Provision database schema (sync operation) - for V2 or as fallback
+         if sync_db and (version == 2 or not backend_url):
             provisioning = ProvisioningService(sync_db)
             provisioning.provision_app_schema(schema_name, blueprint)
 
@@ -277,6 +298,12 @@ class AppService:
          except Exception as e:
             logger.error(f"Failed to drop schema: {e}")
 
+      # Delete generated backend if exists
+      try:
+         await self.backend_generator.delete_backend(app_id)
+      except Exception as e:
+         logger.error(f"Failed to delete generated backend: {e}")
+
       # Delete the app (cascades to blueprints, jobs, runtime_config)
       await self.db.execute(delete(App).where(App.id == app_id))
       await self.db.commit()
@@ -299,6 +326,10 @@ class AppService:
          select(GenerationJob).where(GenerationJob.id == job_id)
       )
       return result.scalar_one_or_none()
+
+   async def get_backend_status(self, app_id: UUID) -> Optional[dict]:
+      """Get the status of the generated backend for an app."""
+      return await self.backend_generator.get_backend_status(app_id)
 
    def _generate_slug(self, name: str) -> str:
       """Generate a URL-safe slug from a name."""

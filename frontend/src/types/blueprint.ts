@@ -1,5 +1,5 @@
 // ============================================================================
-// BLUEPRINT V2 TYPES - Dynamic UI Blocks System
+// BLUEPRINT V3 TYPES - Full-Stack Generation with Amplication
 // ============================================================================
 
 // --- Data Layer ---
@@ -14,17 +14,19 @@ export interface ColumnSpec {
 }
 
 export interface TableSpec {
-   name: string;
+   name: string;  // PascalCase for V3
+   displayName?: string;
    primaryKey?: string;
    columns: ColumnSpec[];
 }
 
 export interface RelationshipSpec {
+   name: string;  // Relationship name
    type: 'many_to_one' | 'one_to_many';
    fromTable: string;
-   fromColumn: string;
    toTable: string;
-   toColumn: string;
+   fromColumn?: string;
+   toColumn?: string;
    lookupLabelColumn?: string;
 }
 
@@ -33,24 +35,40 @@ export interface DataSpec {
    relationships?: RelationshipSpec[];
 }
 
-// --- Security Layer ---
+// --- Security Layer V3 ---
 
-export interface PermissionRule {
+export interface RoleSpec {
+   name: string;
+   displayName?: string;
+}
+
+export interface EntityPermission {
    role: string;
-   resource: string;
+   entity: string;
    actions: Record<string, boolean>;
 }
 
-export interface RowFilterRule {
-   role: string;
-   resource: string;
-   filter: any;
+export interface SecuritySpecV3 {
+   roles: RoleSpec[];
+   permissions: EntityPermission[];
 }
 
-export interface SecuritySpec {
-   roles: string[];
-   permissions: PermissionRule[];
-   rowFilters?: RowFilterRule[];
+// --- Backend Configuration (V3 only) ---
+
+export interface AuthConfig {
+   provider: 'jwt' | 'basic' | 'none';
+}
+
+export interface BackendSettings {
+   generateREST?: boolean;
+   generateGraphQL?: boolean;
+   generateSwagger?: boolean;
+}
+
+export interface BackendConfig {
+   generator: 'amplication';
+   settings?: BackendSettings;
+   auth?: AuthConfig;
 }
 
 // --- UI Blocks System ---
@@ -67,7 +85,8 @@ export interface OrderSpec {
 }
 
 export interface DataSourceSpec {
-   table: string;
+   entity?: string;  // V3 uses "entity"
+   table?: string;   // V2 uses "table" (for backwards compatibility)
    filters?: FilterSpec[];
    orderBy?: OrderSpec[];
    limit?: number;
@@ -89,6 +108,19 @@ export interface VisibilityRule {
 // --- Block Types ---
 
 export type BlockType =
+   | 'TABLE'
+   | 'FORM'
+   | 'DETAIL'
+   | 'STAT_CARD'
+   | 'CHART'
+   | 'KANBAN'
+   | 'CALENDAR'
+   | 'TIMELINE'
+   | 'CHAT'
+   | 'GALLERY'
+   | 'TREE'
+   | 'FILE_LIST'
+   // Legacy lowercase types for V2 compatibility
    | 'table'
    | 'form'
    | 'detail'
@@ -125,7 +157,8 @@ export interface BlockSpec {
 
 export interface TableColumnDef {
    field: string;
-   label: string;
+   header?: string;
+   label?: string;
    type?: 'text' | 'number' | 'date' | 'datetime' | 'badge' | 'boolean' | 'image' | 'link';
    sortable?: boolean;
    width?: string;
@@ -138,6 +171,9 @@ export interface TableProps {
    allowSort?: boolean;
    allowSelect?: boolean;
    allowExport?: boolean;
+   allowCreate?: boolean;
+   allowEdit?: boolean;
+   allowDelete?: boolean;
    pagination?: { pageSize: number };
    rowActions?: ('view' | 'edit' | 'delete' | ActionConfig)[];
    emptyMessage?: string;
@@ -151,11 +187,11 @@ export interface FormFieldDef {
    options?: string[] | { value: string; label: string }[];
    placeholder?: string;
    defaultValue?: any;
-   table?: string; // For relation fields
+   table?: string;
 }
 
 export interface FormProps {
-   mode: 'create' | 'edit';
+   mode?: 'create' | 'edit';
    fields: FormFieldDef[];
    submitLabel?: string;
    cancelLabel?: string;
@@ -358,21 +394,89 @@ export interface UISpec {
    globalActions?: GlobalAction[];
 }
 
-// --- Blueprint V2 (Main Type) ---
+// --- Security V2 (Legacy) ---
+
+export interface PermissionRule {
+   role: string;
+   resource: string;
+   actions: Record<string, boolean>;
+}
+
+export interface RowFilterRule {
+   role: string;
+   resource: string;
+   filter: any;
+}
+
+export interface SecuritySpecV2 {
+   roles: string[];
+   permissions: PermissionRule[];
+   rowFilters?: RowFilterRule[];
+}
+
+// --- Blueprint V3 (Main Type) ---
+
+export interface BlueprintV3 {
+   version: 3;
+   app: AppInfo;
+   backend: BackendConfig;
+   data: DataSpec;
+   security: SecuritySpecV3;
+   ui: UISpec;
+}
+
+// --- Blueprint V2 (Legacy) ---
 
 export interface BlueprintV2 {
    version: 2;
    app: AppInfo;
    data: DataSpec;
-   security: SecuritySpec;
+   security: SecuritySpecV2;
    ui: UISpec;
 }
 
-// Alias for backwards compatibility
-export type Blueprint = BlueprintV2;
+// Union type for all Blueprint versions
+export type Blueprint = BlueprintV3 | BlueprintV2;
 
-// Type guard to check if blueprint is valid V2
-export function isBlueprintV2(blueprint: any): blueprint is BlueprintV2 {
-   return blueprint && blueprint.version === 2 && 'pages' in blueprint.ui;
+// Type guards
+export function isBlueprintV3(blueprint: any): blueprint is BlueprintV3 {
+   return blueprint && blueprint.version === 3 && 'backend' in blueprint;
 }
 
+export function isBlueprintV2(blueprint: any): blueprint is BlueprintV2 {
+   return blueprint && blueprint.version === 2 && !('backend' in blueprint);
+}
+
+export function isValidBlueprint(blueprint: any): blueprint is Blueprint {
+   return isBlueprintV3(blueprint) || isBlueprintV2(blueprint);
+}
+
+/**
+ * Get entity/table name from data source (handles both V2 and V3)
+ */
+export function getEntityFromDataSource(dataSource?: DataSourceSpec): string | undefined {
+   if (!dataSource) return undefined;
+   return dataSource.entity || dataSource.table;
+}
+
+/**
+ * Normalize block type to uppercase (V3 convention)
+ */
+export function normalizeBlockType(type: string): string {
+   // Convert legacy lowercase types to uppercase
+   const typeMap: Record<string, string> = {
+      'table': 'TABLE',
+      'form': 'FORM',
+      'detail': 'DETAIL',
+      'stat-card': 'STAT_CARD',
+      'chart': 'CHART',
+      'kanban': 'KANBAN',
+      'calendar': 'CALENDAR',
+      'timeline': 'TIMELINE',
+      'chat': 'CHAT',
+      'gallery': 'GALLERY',
+      'tree': 'TREE',
+      'file-list': 'FILE_LIST',
+   };
+   return typeMap[type.toLowerCase()] || type.toUpperCase();
+}

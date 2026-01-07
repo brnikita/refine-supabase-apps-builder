@@ -6,7 +6,7 @@ from app.models.blueprint import ValidationStatus
 
 
 # ============================================================================
-# BLUEPRINT V2 SCHEMA - Dynamic UI Blocks System
+# BLUEPRINT V3 SCHEMA - Full-Stack Generation with Amplication
 # ============================================================================
 
 # --- Data Layer ---
@@ -21,17 +21,19 @@ class ColumnSpec(BaseModel):
 
 
 class TableSpec(BaseModel):
-   name: str
+   name: str  # PascalCase for V3 (e.g., "Task", "Project")
+   displayName: Optional[str] = None
    primaryKey: str = "id"
    columns: List[ColumnSpec]
 
 
 class RelationshipSpec(BaseModel):
+   name: str  # Relationship name (e.g., "project", "tasks")
    type: Literal["many_to_one", "one_to_many"]
    fromTable: str
-   fromColumn: str
    toTable: str
-   toColumn: str
+   fromColumn: Optional[str] = None  # Optional, auto-generated if not provided
+   toColumn: Optional[str] = None
    lookupLabelColumn: Optional[str] = None
 
 
@@ -40,37 +42,43 @@ class DataSpec(BaseModel):
    relationships: Optional[List[RelationshipSpec]] = []
 
 
-# --- Security Layer ---
+# --- Security Layer V3 (Entity-Action based) ---
 
-class PermissionRule(BaseModel):
+class RoleSpec(BaseModel):
+   name: str
+   displayName: Optional[str] = None
+
+
+class EntityPermission(BaseModel):
    role: str
-   resource: str
-   actions: Dict[str, bool]  # list, read, create, update, delete
+   entity: str
+   actions: Dict[str, bool]  # create, read, update, delete
 
 
-class FilterExpression(BaseModel):
-   equals: Optional[List[str]] = None
-   in_: Optional[List[str]] = Field(None, alias="in")
-   and_: Optional[List["FilterExpression"]] = Field(None, alias="and")
-   or_: Optional[List["FilterExpression"]] = Field(None, alias="or")
-
-   class Config:
-      populate_by_name = True
+class SecuritySpecV3(BaseModel):
+   roles: List[RoleSpec]
+   permissions: List[EntityPermission]
 
 
-class RowFilterRule(BaseModel):
-   role: str
-   resource: str
-   filter: FilterExpression
+# --- Backend Configuration (V3 only) ---
+
+class AuthConfig(BaseModel):
+   provider: Literal["jwt", "basic", "none"] = "jwt"
 
 
-class SecuritySpec(BaseModel):
-   roles: List[str]
-   permissions: List[PermissionRule]
-   rowFilters: Optional[List[RowFilterRule]] = []
+class BackendSettings(BaseModel):
+   generateREST: bool = True
+   generateGraphQL: bool = False
+   generateSwagger: bool = True
 
 
-# --- UI Blocks System (V2) ---
+class BackendConfig(BaseModel):
+   generator: Literal["amplication"] = "amplication"
+   settings: BackendSettings = BackendSettings()
+   auth: AuthConfig = AuthConfig()
+
+
+# --- UI Blocks System ---
 
 class FilterSpec(BaseModel):
    field: str
@@ -84,7 +92,7 @@ class OrderSpec(BaseModel):
 
 
 class DataSourceSpec(BaseModel):
-   table: str
+   entity: str  # V3 uses "entity" instead of "table"
    filters: Optional[List[FilterSpec]] = []
    orderBy: Optional[List[OrderSpec]] = []
    limit: Optional[int] = None
@@ -107,7 +115,7 @@ class VisibilityRule(BaseModel):
 
 class BlockSpec(BaseModel):
    id: str
-   type: str  # table, form, kanban, calendar, chart, stat-card, etc.
+   type: str  # TABLE, FORM, KANBAN, CALENDAR, CHART, STAT_CARD, etc.
    dataSource: Optional[DataSourceSpec] = None
    props: Dict[str, Any] = {}
    actions: Optional[List[ActionConfig]] = []
@@ -182,30 +190,136 @@ class AppInfo(BaseModel):
    theme: Optional[ThemeSpec] = None
 
 
-# --- UI Spec V2 ---
+# --- UI Spec V3 ---
 
-class UISpecV2(BaseModel):
+class UISpecV3(BaseModel):
    navigation: List[NavItem] = []
    pages: List[PageSpec] = []
    modals: Optional[List[ModalSpec]] = []
    globalActions: Optional[List[GlobalAction]] = []
 
 
-# --- Blueprint V2 (Main Schema) ---
+# --- Blueprint V3 (Main Schema) ---
+
+class BlueprintV3(BaseModel):
+   version: Literal[3] = 3
+   app: AppInfo
+   backend: BackendConfig = BackendConfig()
+   data: DataSpec
+   security: SecuritySpecV3
+   ui: UISpecV3
+
+
+# ============================================================================
+# BLUEPRINT V2 SCHEMA (Legacy - for backwards compatibility)
+# ============================================================================
+
+class PermissionRule(BaseModel):
+   role: str
+   resource: str
+   actions: Dict[str, bool]  # list, read, create, update, delete
+
+
+class FilterExpression(BaseModel):
+   equals: Optional[List[str]] = None
+   in_: Optional[List[str]] = Field(None, alias="in")
+   and_: Optional[List["FilterExpression"]] = Field(None, alias="and")
+   or_: Optional[List["FilterExpression"]] = Field(None, alias="or")
+
+   class Config:
+      populate_by_name = True
+
+
+class RowFilterRule(BaseModel):
+   role: str
+   resource: str
+   filter: FilterExpression
+
+
+class SecuritySpecV2(BaseModel):
+   roles: List[str]
+   permissions: List[PermissionRule]
+   rowFilters: Optional[List[RowFilterRule]] = []
+
+
+class DataSourceSpecV2(BaseModel):
+   table: str  # V2 uses "table"
+   filters: Optional[List[FilterSpec]] = []
+   orderBy: Optional[List[OrderSpec]] = []
+   limit: Optional[int] = None
+   include: Optional[List[str]] = []
+   realtime: Optional[bool] = False
+
+
+class BlockSpecV2(BaseModel):
+   id: str
+   type: str
+   dataSource: Optional[DataSourceSpecV2] = None
+   props: Dict[str, Any] = {}
+   actions: Optional[List[ActionConfig]] = []
+   gridArea: Optional[str] = None
+   className: Optional[str] = None
+   visibility: Optional[VisibilityRule] = None
+   children: Optional[List["BlockSpecV2"]] = []
+
+
+class PageSpecV2(BaseModel):
+   id: str
+   route: str
+   title: str
+   icon: Optional[str] = None
+   layout: Optional[LayoutConfig] = None
+   blocks: List[BlockSpecV2] = []
+   variables: Optional[Dict[str, Any]] = {}
+
+
+class ModalSpecV2(BaseModel):
+   id: str
+   title: str
+   size: Literal["small", "medium", "large", "fullscreen"] = "medium"
+   blocks: List[BlockSpecV2] = []
+
+
+class UISpecV2(BaseModel):
+   navigation: List[NavItem] = []
+   pages: List[PageSpecV2] = []
+   modals: Optional[List[ModalSpecV2]] = []
+   globalActions: Optional[List[GlobalAction]] = []
+
+
+class TableSpecV2(BaseModel):
+   name: str  # snake_case for V2
+   primaryKey: str = "id"
+   columns: List[ColumnSpec]
+
+
+class RelationshipSpecV2(BaseModel):
+   type: Literal["many_to_one", "one_to_many"]
+   fromTable: str
+   fromColumn: str
+   toTable: str
+   toColumn: str
+   lookupLabelColumn: Optional[str] = None
+
+
+class DataSpecV2(BaseModel):
+   tables: List[TableSpecV2]
+   relationships: Optional[List[RelationshipSpecV2]] = []
+
 
 class BlueprintV2(BaseModel):
-   version: int = 2
+   version: Literal[2] = 2
    app: AppInfo
-   data: DataSpec
-   security: SecuritySpec
+   data: DataSpecV2
+   security: SecuritySpecV2
    ui: UISpecV2
 
 
 # ============================================================================
-# Alias for backwards compatibility (Blueprint = BlueprintV2)
+# Union type for all Blueprint versions
 # ============================================================================
 
-Blueprint = BlueprintV2
+Blueprint = Union[BlueprintV3, BlueprintV2]
 
 
 # ============================================================================

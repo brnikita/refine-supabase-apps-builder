@@ -34,6 +34,13 @@ export interface BlockComponentProps {
       selectedRecord?: any;
       user?: any;
    };
+   // V3: Function to fetch data from API
+   fetchData?: (options?: {
+      page?: number;
+      pageSize?: number;
+      sort?: { field: string; order: 'asc' | 'desc' };
+      filters?: Array<{ field: string; value: any }>;
+   }) => Promise<{ data: any[]; total: number }>;
 }
 
 // Component registry type

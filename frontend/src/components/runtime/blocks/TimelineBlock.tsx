@@ -160,7 +160,7 @@ export function TimelineBlock({
                      <div className="absolute left-4 top-0 bottom-0 w-px bg-white/10" />
 
                      <div className="space-y-4">
-                        {items.map((item, index) => {
+                        {items.map((item: any, index: number) => {
                            const Icon = getItemIcon(item);
                            const color = getItemColor(item);
                            const date = new Date(item[props.dateField]);

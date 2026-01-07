@@ -14,9 +14,10 @@ interface LayoutRendererProps {
       user?: any;
    };
    onAction?: (action: string, config: any, context?: any) => void;
-   onCreate?: (table: string, data: any) => Promise<any>;
-   onUpdate?: (table: string, id: string, data: any) => Promise<any>;
-   onDelete?: (table: string, id: string) => Promise<void>;
+   onCreate?: (entity: string, data: any) => Promise<any>;
+   onUpdate?: (entity: string, id: string, data: any) => Promise<any>;
+   onDelete?: (entity: string, id: string) => Promise<void>;
+   fetchData?: (entity: string, options?: any) => Promise<{ data: any[]; total: number }>;
 }
 
 export function LayoutRenderer({
@@ -28,6 +29,7 @@ export function LayoutRenderer({
    onCreate,
    onUpdate,
    onDelete,
+   fetchData,
 }: LayoutRendererProps) {
    const [activeTab, setActiveTab] = useState(0);
 
@@ -45,6 +47,7 @@ export function LayoutRenderer({
             onCreate={onCreate}
             onUpdate={onUpdate}
             onDelete={onDelete}
+            fetchData={fetchData}
          />
       ));
    };
@@ -152,6 +155,7 @@ export function LayoutRenderer({
                         onCreate={onCreate}
                         onUpdate={onUpdate}
                         onDelete={onDelete}
+                        fetchData={fetchData}
                      />
                   )}
                </div>

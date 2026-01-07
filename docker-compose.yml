@@ -29,10 +29,14 @@ services:
          - LLM_MODEL=${LLM_MODEL:-openai/gpt-4o-mini}
          - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
          - DEBUG=true
+         - GENERATED_APPS_PATH=/var/lib/blueprint-apps
+         - DOCKER_HOST=unix:///var/run/docker.sock
       ports:
          - "8000:8000"
       volumes:
          - ./backend:/app
+         - /var/run/docker.sock:/var/run/docker.sock
+         - generated_apps:/var/lib/blueprint-apps
       depends_on:
          db:
             condition: service_healthy
@@ -57,4 +61,4 @@ services:
 
 volumes:
    postgres_data:
-
+   generated_apps:

@@ -38,6 +38,16 @@ async def get_runtime_app(
 
    # Get latest blueprint
    blueprint = await app_service.get_latest_blueprint(app.id)
+   
+   # Get backend status for V3 apps
+   backend_url = None
+   backend_port = None
+   
+   if blueprint and blueprint.blueprint_json.get("version") == 3:
+      backend_status = await app_service.get_backend_status(app.id)
+      if backend_status:
+         backend_url = backend_status.get("backend_url")
+         backend_port = backend_status.get("port")
 
    return {
       "status": "running",
@@ -48,8 +58,9 @@ async def get_runtime_app(
       },
       "runtime_config": {
          "db_schema": runtime_config.db_schema if runtime_config else None,
-         "base_path": runtime_config.public_base_path if runtime_config else None
+         "base_path": runtime_config.public_base_path if runtime_config else None,
+         "backend_url": backend_url,
+         "backend_port": backend_port
       },
       "blueprint": blueprint.blueprint_json if blueprint else None
    }
-

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { BlockSpec, DataSourceSpec } from "@/types/blueprint";
+import { BlockSpec, DataSourceSpec, getEntityFromDataSource } from "@/types/blueprint";
 import { getBlockComponent, BlockComponentProps } from "./blocks";
 
 interface BlockRendererProps {
@@ -13,9 +13,10 @@ interface BlockRendererProps {
       user?: any;
    };
    onAction?: (action: string, config: any, context?: any) => void;
-   onCreate?: (table: string, data: any) => Promise<any>;
-   onUpdate?: (table: string, id: string, data: any) => Promise<any>;
-   onDelete?: (table: string, id: string) => Promise<void>;
+   onCreate?: (entity: string, data: any) => Promise<any>;
+   onUpdate?: (entity: string, id: string, data: any) => Promise<any>;
+   onDelete?: (entity: string, id: string) => Promise<void>;
+   fetchData?: (entity: string, options?: any) => Promise<{ data: any[]; total: number }>;
 }
 
 export function BlockRenderer({
@@ -26,20 +27,26 @@ export function BlockRenderer({
    onCreate,
    onUpdate,
    onDelete,
+   fetchData,
 }: BlockRendererProps) {
    // Get the component for this block type
    const Component = getBlockComponent(block.type);
 
+   // Get entity name from data source (handles both V2 "table" and V3 "entity")
+   const entityName = getEntityFromDataSource(block.dataSource);
+
    // Get data for this block's data source
    const blockData = useMemo(() => {
-      if (!block.dataSource?.table) return [];
-      const tableData = data[block.dataSource.table] || [];
+      if (!entityName) return [];
+      const tableData = data[entityName] || [];
 
       // Apply filters (simple implementation)
       let filtered = tableData;
-      if (block.dataSource.filters && block.dataSource.filters.length > 0) {
+      const dataSource = block.dataSource;
+      
+      if (dataSource?.filters && dataSource.filters.length > 0) {
          filtered = tableData.filter((item) => {
-            return block.dataSource!.filters!.every((filter) => {
+            return dataSource.filters!.every((filter) => {
                const value = item[filter.field];
                const filterValue = resolveTemplateValue(filter.value, context);
 
@@ -72,9 +79,9 @@ export function BlockRenderer({
       }
 
       // Apply ordering
-      if (block.dataSource.orderBy && block.dataSource.orderBy.length > 0) {
+      if (dataSource?.orderBy && dataSource.orderBy.length > 0) {
          filtered = [...filtered].sort((a, b) => {
-            for (const order of block.dataSource!.orderBy!) {
+            for (const order of dataSource.orderBy!) {
                const aVal = a[order.field];
                const bVal = b[order.field];
                if (aVal === bVal) continue;
@@ -88,12 +95,12 @@ export function BlockRenderer({
       }
 
       // Apply limit
-      if (block.dataSource.limit) {
-         filtered = filtered.slice(0, block.dataSource.limit);
+      if (dataSource?.limit) {
+         filtered = filtered.slice(0, dataSource.limit);
       }
 
       return filtered;
-   }, [block.dataSource, data, context]);
+   }, [block.dataSource, data, context, entityName]);
 
    // Check visibility
    if (block.visibility) {
@@ -101,17 +108,22 @@ export function BlockRenderer({
       if (!isVisible) return null;
    }
 
-   // Wrap CRUD operations with table name
-   const handleCreate = block.dataSource?.table
-      ? (data: any) => onCreate?.(block.dataSource!.table, data)
+   // Wrap CRUD operations with entity name
+   const handleCreate = entityName && onCreate
+      ? async (data: any) => onCreate(entityName, data)
       : undefined;
 
-   const handleUpdate = block.dataSource?.table
-      ? (id: string, data: any) => onUpdate?.(block.dataSource!.table, id, data)
+   const handleUpdate = entityName && onUpdate
+      ? async (id: string, data: any) => onUpdate(entityName, id, data)
       : undefined;
 
-   const handleDelete = block.dataSource?.table
-      ? (id: string) => onDelete?.(block.dataSource!.table, id)
+   const handleDelete = entityName && onDelete
+      ? async (id: string) => onDelete(entityName, id)
+      : undefined;
+
+   // Wrap fetchData with entity name
+   const handleFetchData = entityName && fetchData
+      ? (options?: any) => fetchData(entityName, options)
       : undefined;
 
    // Handle actions from blocks
@@ -137,9 +149,10 @@ export function BlockRenderer({
       onCreate: handleCreate,
       onUpdate: handleUpdate,
       onDelete: handleDelete,
-      onRefresh: () => {},
+      onRefresh: handleFetchData ? () => { handleFetchData(); } : () => {},
       onAction: handleAction,
       context,
+      fetchData: handleFetchData,
    };
 
    // Apply grid area if specified
@@ -227,4 +240,3 @@ function evaluateCondition(condition: string, context: any): boolean {
       return true;
    }
 }
-

@@ -161,7 +161,7 @@ export function ChatBlock({
 
                   {/* Messages */}
                   <div className="space-y-4">
-                     {messages.map((msg) => {
+                     {messages.map((msg: any) => {
                         const isOwn = isCurrentUser(msg);
                         const senderName = msg[props.senderNameField] || "Unknown";
                         const avatar = props.senderAvatarField

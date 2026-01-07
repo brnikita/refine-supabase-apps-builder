@@ -5,12 +5,18 @@ import { useParams } from "next/navigation";
 import { getRuntimeApp } from "@/lib/api";
 import { Loader2, AlertCircle, Power } from "lucide-react";
 import { RuntimeAppV2 } from "@/components/runtime/RuntimeAppV2";
-import { isBlueprintV2 } from "@/types/blueprint";
+import { RuntimeAppV3 } from "@/components/runtime/RuntimeAppV3";
+import { isBlueprintV2, isBlueprintV3, BlueprintV2, BlueprintV3 } from "@/types/blueprint";
 
 interface RuntimeData {
    status: string;
    app?: { id: string; name: string; slug: string };
-   runtime_config?: { db_schema: string; base_path: string };
+   runtime_config?: { 
+      db_schema: string; 
+      base_path: string;
+      backend_url?: string;
+      backend_port?: number;
+   };
    blueprint?: any;
    message?: string;
 }
@@ -85,24 +91,42 @@ export default function AppRuntimePage() {
       );
    }
 
-   // Validate that blueprint is V2
-   if (!isBlueprintV2(runtimeData.blueprint)) {
+   // Check blueprint version and render appropriate runtime
+   const blueprint = runtimeData.blueprint;
+
+   // V3 Blueprint - Full-stack with generated backend
+   if (isBlueprintV3(blueprint)) {
       return (
-         <div className="min-h-screen gradient-bg flex items-center justify-center">
-            <div className="text-center">
-               <AlertCircle className="w-16 h-16 text-amber-400 mx-auto mb-4" />
-               <h1 className="text-2xl font-bold text-white mb-2">Invalid Blueprint</h1>
-               <p className="text-white/60">This app has an invalid or outdated blueprint format.</p>
-            </div>
-         </div>
+         <RuntimeAppV3
+            app={runtimeData.app!}
+            blueprint={blueprint as BlueprintV3}
+            runtimeConfig={runtimeData.runtime_config!}
+         />
       );
    }
 
+   // V2 Blueprint - Legacy with mock data
+   if (isBlueprintV2(blueprint)) {
+      return (
+         <RuntimeAppV2
+            app={runtimeData.app!}
+            blueprint={blueprint as BlueprintV2}
+            runtimeConfig={runtimeData.runtime_config!}
+         />
+      );
+   }
+
+   // Invalid blueprint
    return (
-      <RuntimeAppV2
-         app={runtimeData.app!}
-         blueprint={runtimeData.blueprint}
-         runtimeConfig={runtimeData.runtime_config!}
-      />
+      <div className="min-h-screen gradient-bg flex items-center justify-center">
+         <div className="text-center">
+            <AlertCircle className="w-16 h-16 text-amber-400 mx-auto mb-4" />
+            <h1 className="text-2xl font-bold text-white mb-2">Invalid Blueprint</h1>
+            <p className="text-white/60">This app has an invalid or outdated blueprint format.</p>
+            <p className="text-white/40 text-sm mt-2">
+               Blueprint version: {blueprint?.version || "unknown"}
+            </p>
+         </div>
+      </div>
    );
 }
