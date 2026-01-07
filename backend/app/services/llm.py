@@ -165,6 +165,37 @@ IMPORTANT RULES:
 - ALWAYS choose the most appropriate block type for the use case
 - For task/project apps, USE KANBAN. For scheduling, USE CALENDAR.
 - dataSource uses "entity" (not "table") and must match entity names exactly (PascalCase)
+
+MODALS ARE REQUIRED:
+- ALWAYS create modals for CRUD operations - this is MANDATORY
+- For each entity, create at least:
+  1. A "create-{entity}" modal with a FORM block for creating new records
+  2. An "edit-{entity}" modal with a FORM block for editing records (pre-filled with selected record data)
+- Modal FORM blocks must include all editable fields from the entity
+- Example modal structure:
+  {
+    "id": "create-task",
+    "title": "Create New Task",
+    "size": "medium",
+    "blocks": [{
+      "id": "create-task-form",
+      "type": "FORM",
+      "dataSource": { "entity": "Task" },
+      "props": {
+        "fields": [
+          { "name": "title", "label": "Title", "type": "text", "required": true },
+          { "name": "description", "label": "Description", "type": "textarea", "required": false },
+          { "name": "status", "label": "Status", "type": "select", "required": true, "options": ["todo", "inProgress", "done"] }
+        ]
+      },
+      "actions": [{ "trigger": "submit", "action": "submit", "config": {} }]
+    }]
+  }
+- KANBAN/TABLE blocks should have actions that open these modals:
+  actions: [
+    { "trigger": "createClick", "action": "openModal", "config": { "modal": "create-task" } },
+    { "trigger": "cardClick", "action": "openModal", "config": { "modal": "edit-task" } }
+  ]
 """
 
 # V2 Blueprint System Prompt (legacy)
