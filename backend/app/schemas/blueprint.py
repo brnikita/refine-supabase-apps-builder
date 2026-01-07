@@ -202,47 +202,10 @@ class BlueprintV2(BaseModel):
 
 
 # ============================================================================
-# BLUEPRINT V1 SCHEMA (Legacy - for backwards compatibility)
+# Alias for backwards compatibility (Blueprint = BlueprintV2)
 # ============================================================================
 
-class FieldSpec(BaseModel):
-   name: str
-   widget: Optional[str] = None
-   options: Optional[List[Any]] = None
-   label: Optional[str] = None
-
-
-class ListConfig(BaseModel):
-   columns: List[str]
-   filters: Optional[List[Dict[str, Any]]] = None
-
-
-class FormConfig(BaseModel):
-   createFields: Optional[List[FieldSpec]] = None
-   editFields: Optional[List[FieldSpec]] = None
-
-
-class ResourceSpec(BaseModel):
-   name: str
-   table: str
-   label: str
-   views: Dict[str, bool] = {"list": True, "create": True, "edit": True, "show": True}
-   list: Optional[ListConfig] = None
-   forms: Optional[FormConfig] = None
-
-
-class UISpec(BaseModel):
-   navigation: List[NavItem]
-   resources: List[ResourceSpec]
-   pages: Optional[List[Dict[str, Any]]] = []
-
-
-class BlueprintV1(BaseModel):
-   version: int = 1
-   app: AppInfo
-   data: DataSpec
-   security: SecuritySpec
-   ui: UISpec
+Blueprint = BlueprintV2
 
 
 # ============================================================================
