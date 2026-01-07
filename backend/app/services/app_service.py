@@ -81,17 +81,16 @@ class AppService:
       timestamp = datetime.utcnow().strftime("%H%M%S")
       return f"{base_slug[:20]}-{timestamp}"
 
-   async def generate_app(
+   async def create_generation_job(
       self,
       user_id: UUID,
       prompt: str,
       model: Optional[str] = None,
-      sync_db: Session = None,
-      version: int = 3  # Default to V3
    ) -> Tuple[UUID, UUID]:
       """
-      Generate a new app from a prompt.
-      Returns: (job_id, app_id)
+      Create app and job records for generation.
+      Returns immediately with (job_id, app_id).
+      The actual generation runs in background via run_generation().
       """
       # Create a temporary app name and slug from prompt
       temp_name = prompt[:50].strip()
@@ -109,15 +108,47 @@ class AppService:
       self.db.add(app)
       await self.db.flush()
 
-      # Create the generation job
+      # Create the generation job with QUEUED status
       job = GenerationJob(
          app_id=app.id,
-         status=JobStatus.RUNNING,
+         status=JobStatus.QUEUED,
          model=model or self.llm_service.default_model,
          prompt=prompt
       )
       self.db.add(job)
-      await self.db.flush()
+      await self.db.commit()
+
+      return job.id, app.id
+
+   async def run_generation(
+      self,
+      job_id: UUID,
+      app_id: UUID,
+      prompt: str,
+      model: Optional[str] = None,
+      sync_db: Session = None,
+      version: int = 3  # Default to V3
+   ):
+      """
+      Run the actual generation process (LLM + Docker build).
+      This should be called in a background task.
+      """
+      # Get the job and app
+      result = await self.db.execute(select(GenerationJob).where(GenerationJob.id == job_id))
+      job = result.scalar_one_or_none()
+      if not job:
+         logger.error(f"Job {job_id} not found")
+         return
+      
+      result = await self.db.execute(select(App).where(App.id == app_id))
+      app = result.scalar_one_or_none()
+      if not app:
+         logger.error(f"App {app_id} not found")
+         return
+
+      # Update job to RUNNING
+      job.status = JobStatus.RUNNING
+      await self.db.commit()
 
       try:
          # Generate blueprint via LLM (now generates V3)
@@ -128,6 +159,7 @@ class AppService:
          # Update job with LLM data
          job.llm_request = llm_request
          job.llm_response = llm_response
+         await self.db.commit()
 
          # Validate blueprint
          is_valid, blueprint, errors = self.blueprint_service.validate_blueprint(blueprint_dict)
@@ -145,6 +177,7 @@ class AppService:
                )
                job.llm_request = repair_request
                job.llm_response = repair_response
+               await self.db.commit()
 
                is_valid, blueprint, errors = self.blueprint_service.validate_blueprint(blueprint_dict)
             except Exception as e:
@@ -167,7 +200,7 @@ class AppService:
             app.status = AppStatus.ERROR
 
             await self.db.commit()
-            return job.id, app.id
+            return
 
          # Blueprint is valid - update app with blueprint info
          # Ensure the blueprint slug is unique
@@ -228,8 +261,8 @@ class AppService:
          # Update job status
          job.status = JobStatus.SUCCEEDED
          await self.db.commit()
-
-         return job.id, app.id
+         
+         logger.info(f"Generation completed successfully for app {app_id}")
 
       except Exception as e:
          logger.error(f"App generation failed: {e}")
@@ -237,7 +270,23 @@ class AppService:
          job.error_message = str(e)
          app.status = AppStatus.ERROR
          await self.db.commit()
-         raise
+
+   # Keep the old method for backwards compatibility
+   async def generate_app(
+      self,
+      user_id: UUID,
+      prompt: str,
+      model: Optional[str] = None,
+      sync_db: Session = None,
+      version: int = 3  # Default to V3
+   ) -> Tuple[UUID, UUID]:
+      """
+      Generate a new app from a prompt (synchronous version).
+      Returns: (job_id, app_id)
+      """
+      job_id, app_id = await self.create_generation_job(user_id, prompt, model)
+      await self.run_generation(job_id, app_id, prompt, model, sync_db, version)
+      return job_id, app_id
 
    async def start_app(self, app_id: UUID, user_id: UUID) -> bool:
       """Start an app (set status to RUNNING) and start backend container."""

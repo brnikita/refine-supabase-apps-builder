@@ -36,6 +36,11 @@ class Base(DeclarativeBase):
    pass
 
 
+# Factory functions for creating sessions outside of FastAPI dependencies
+async_session_factory = AsyncSessionLocal
+sync_session_factory = SyncSessionLocal
+
+
 async def get_db() -> AsyncSession:
    async with AsyncSessionLocal() as session:
       try:

@@ -771,8 +771,8 @@ PORT=3000
         with open(metadata_file, "w") as f:
             json.dump(metadata, f, indent=2)
     
-    async def _stop_container(self, container_name: str):
-        """Stop and remove a container if it exists."""
+    def _stop_container_sync(self, container_name: str):
+        """Stop and remove a container if it exists (synchronous)."""
         try:
             container = self.docker_client.containers.get(container_name)
             logger.info(f"Stopping existing container {container_name}...")
@@ -783,9 +783,13 @@ PORT=3000
             pass  # Container doesn't exist, that's fine
         except Exception as e:
             logger.warning(f"Error stopping container {container_name}: {e}")
+
+    async def _stop_container(self, container_name: str):
+        """Stop and remove a container if it exists (async wrapper)."""
+        await asyncio.to_thread(self._stop_container_sync, container_name)
     
-    async def _build_image(self, app_dir: Path, image_name: str) -> Tuple[Any, List[str]]:
-        """Build Docker image from app directory."""
+    def _build_image_sync(self, app_dir: Path, image_name: str) -> Tuple[Any, List[str]]:
+        """Build Docker image from app directory (synchronous)."""
         logs = []
         
         try:
@@ -818,15 +822,20 @@ PORT=3000
                 if 'stream' in log:
                     logger.error(log['stream'])
             raise RuntimeError(f"Docker build failed: {e}")
+
+    async def _build_image(self, app_dir: Path, image_name: str) -> Tuple[Any, List[str]]:
+        """Build Docker image from app directory (async wrapper)."""
+        # Run blocking Docker build in thread pool to not block event loop
+        return await asyncio.to_thread(self._build_image_sync, app_dir, image_name)
     
-    async def _run_container(
+    def _run_container_sync(
         self, 
         image_name: str, 
         container_name: str, 
         port: int,
         db_schema: str
     ) -> Any:
-        """Create and start a container."""
+        """Create and start a container (synchronous)."""
         # Database URL for the container
         db_url = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?schema={db_schema}"
         
@@ -847,57 +856,87 @@ PORT=3000
             labels={
                 "blueprint.app": "true",
                 "blueprint.port": str(port),
+            },
+            log_config={
+                "type": "json-file",
+                "config": {
+                    "max-size": "10m",
+                    "max-file": "3"
+                }
             }
         )
         
         return container
+
+    async def _run_container(
+        self, 
+        image_name: str, 
+        container_name: str, 
+        port: int,
+        db_schema: str
+    ) -> Any:
+        """Create and start a container (async wrapper)."""
+        # Run blocking Docker operation in thread pool
+        return await asyncio.to_thread(
+            self._run_container_sync, image_name, container_name, port, db_schema
+        )
     
+    def _check_container_status_sync(self, container) -> Tuple[str, str]:
+        """Check container status (synchronous)."""
+        container.reload()
+        status = container.status
+        logs = ""
+        try:
+            logs = container.logs(tail=50).decode('utf-8')
+        except Exception:
+            pass
+        return status, logs
+
     async def _wait_for_container(self, container, timeout: int = 60):
         """Wait for container to be running and healthy."""
         import time
         start_time = time.time()
         
         while time.time() - start_time < timeout:
-            container.reload()
-            status = container.status
+            # Run blocking Docker operations in thread pool
+            status, logs = await asyncio.to_thread(self._check_container_status_sync, container)
             
             if status == "running":
                 # Container is running, wait a bit for the app to start
                 await asyncio.sleep(5)
                 
                 # Check if the app is responding
-                try:
-                    # Try to get logs to see if app started
-                    logs = container.logs(tail=50).decode('utf-8')
-                    if "Application is running" in logs or "Listening" in logs.lower():
-                        logger.info("Application started successfully")
-                        return
-                except Exception:
-                    pass
+                if "Application is running" in logs or "Listening" in logs.lower():
+                    logger.info("Application started successfully")
+                    return
                 
                 # Give it more time
                 await asyncio.sleep(2)
                 return  # Assume it's ready after running for a bit
                 
             elif status == "exited":
-                logs = container.logs().decode('utf-8')
-                raise RuntimeError(f"Container exited unexpectedly. Logs:\n{logs[-2000:]}")
+                full_logs = await asyncio.to_thread(lambda: container.logs().decode('utf-8'))
+                raise RuntimeError(f"Container exited unexpectedly. Logs:\n{full_logs[-2000:]}")
             
             await asyncio.sleep(2)
         
         raise TimeoutError(f"Container did not become ready within {timeout} seconds")
     
+    def _run_prisma_push_sync(self, container) -> Tuple[int, str]:
+        """Run Prisma db push inside the container (synchronous)."""
+        exit_code, output = container.exec_run(
+            cmd=["npx", "prisma", "db", "push", "--accept-data-loss"],
+            workdir="/app",
+            environment={"DATABASE_URL": container.attrs['Config']['Env'][0].split('=', 1)[1]}
+        )
+        output_str = output.decode('utf-8') if output else ""
+        return exit_code, output_str
+
     async def _run_prisma_push(self, container):
         """Run Prisma db push inside the container."""
         try:
-            # Run prisma db push to sync schema
-            exit_code, output = container.exec_run(
-                cmd=["npx", "prisma", "db", "push", "--accept-data-loss"],
-                workdir="/app",
-                environment={"DATABASE_URL": container.attrs['Config']['Env'][0].split('=', 1)[1]}
-            )
-            
-            output_str = output.decode('utf-8') if output else ""
+            # Run blocking Docker operation in thread pool
+            exit_code, output_str = await asyncio.to_thread(self._run_prisma_push_sync, container)
             
             if exit_code != 0:
                 logger.warning(f"Prisma push returned non-zero exit code {exit_code}: {output_str}")
